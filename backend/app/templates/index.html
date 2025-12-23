@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row g-4">
+    <div class="col-12">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center">
+            <div>
+              <h1 class="card-title mb-1">Dashboard</h1>
+              <p class="text-muted mb-0">Monitor low stock, recent syncs, and run the poller manually.</p>
+            </div>
+              <div class="d-flex gap-2">
+                <a href="/skus" class="btn btn-outline-secondary btn-sm">Manage Raw Materials</a>
+                <a href="/products" class="btn btn-outline-secondary btn-sm">Products</a>
+                {% if can_force_sync %}
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    id="force-sync-btn"
+                    hx-post="/sync/force"
+                    hx-target="#sync-result"
+                    hx-swap="innerHTML"
+                    hx-trigger="click"
+                    onclick="forceSyncNow(event)"
+                  >
+                    Force Sync Now
+                  </button>
+                {% endif %}
+              </div>
+          </div>
+          <div id="sync-result" class="mt-3 text-muted"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h3 class="h5">Low-stock SKUs</h3>
+          {% if low_stock %}
+            <ul class="list-group">
+              {% for sku in low_stock %}
+                <li class="list-group-item d-flex justify-content-between align-items-start">
+                  <div>
+                    <div class="fw-bold">{{ sku.name }}</div>
+                    <small class="text-muted">{{ sku.sku_code }}</small>
+                  </div>
+                  <span class="badge bg-danger rounded-pill">{{ sku.current_stock }} / {{ sku.alert_threshold_qty }}</span>
+                </li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p class="text-muted mb-0">Everything is above thresholds.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h3 class="h5">Recent syncs</h3>
+          {% if recent_syncs %}
+            <ul class="list-group">
+              {% for sync in recent_syncs %}
+                <li class="list-group-item">
+                  <div class="d-flex justify-content-between">
+                    <span>{{ sync.action }}</span>
+                    <small class="text-muted">{{ sync.timestamp.strftime("%Y-%m-%d %H:%M:%S") }}</small>
+                  </div>
+                  <p class="mb-0 text-muted small">{{ sync.details }}</p>
+                </li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p class="text-muted mb-0">Awaiting synchronization.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h3 class="h5">Exports</h3>
+          <div class="d-flex gap-2 flex-wrap">
+            <a href="/skus/export?format=csv" class="btn btn-sm btn-outline-primary">CSV</a>
+            <a href="/skus/export?format=markdown" class="btn btn-sm btn-outline-secondary">Markdown</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h3 class="h5">Analytics snapshot</h3>
+          <div class="row text-center">
+            <div class="col-6 border-end">
+              <div class="text-muted small">Total SKUs</div>
+              <div class="fs-3">{{ total_skus }}</div>
+            </div>
+            <div class="col-6">
+              <div class="text-muted small">Below thresholds</div>
+              <div class="fs-3 text-danger">{{ low_stock_count }}</div>
+            </div>
+          </div>
+          <p class="text-muted small mt-3 mb-0">
+            Slow movers & waste trends coming soon.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    async function forceSyncNow(event) {
+      event.preventDefault();
+      const btn = document.getElementById("force-sync-btn");
+      if (!btn) {
+        return;
+      }
+      btn.disabled = true;
+      const target = document.getElementById("sync-result");
+      try {
+        const response = await fetch("/sync/force", { method: "POST" });
+        const text = await response.text();
+        if (target) {
+          target.textContent = text;
+        }
+      } catch (err) {
+        if (target) {
+          target.textContent = "Force sync failed (see logs).";
+        }
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  </script>
+{% endblock %}

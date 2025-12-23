@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2>Raw Materials</h2>
+    {% if current_user and current_user.role.value in ["manager","owner"] %}
+      <a href="/skus/create" class="btn btn-primary btn-sm">Add Raw Material</a>
+    {% endif %}
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body p-0">
+      <table class="table table-hover mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>SKU</th>
+            <th>Name</th>
+            <th>Unit</th>
+            <th>Vendor</th>
+            <th>Stock</th>
+            <th>Threshold</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for sku in skus %}
+            <tr>
+              <td>{{ sku.sku_code }}</td>
+              <td>{{ sku.name }}</td>
+              <td>{{ sku.unit_of_measure }}</td>
+              <td>
+                {% if sku.vendor_name %}{{ sku.vendor_name }}{% endif %}
+                {% if sku.vendor_url %}
+                  <br />
+                  <a href="{{ sku.vendor_url }}" target="_blank" rel="noreferrer">Vendor page</a>
+                {% endif %}
+              </td>
+              <td>{{ sku.current_stock }}</td>
+              <td>{{ sku.alert_threshold_qty or "—" }}</td>
+              <td>
+                <a href="/skus/{{ sku.sku_id }}" class="btn btn-sm btn-outline-primary">View</a>
+                {% if current_user and current_user.role.value in ["manager","owner"] %}
+                  <a href="/skus/{{ sku.sku_id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
+                  <form method="post" action="/skus/{{ sku.sku_id }}/delete" class="d-inline">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete SKU?');">Delete</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}

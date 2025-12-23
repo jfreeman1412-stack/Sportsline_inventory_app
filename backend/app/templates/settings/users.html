@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h2 class="card-title">User Settings</h2>
+      <table class="table table-sm mt-3">
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Stock Alerts</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for user in users %}
+            <tr>
+              <td>{{ user.email }}</td>
+              <td>{{ user.role.value }}</td>
+              <td>
+                <form method="post" action="/settings/users/{{ user.user_id }}/alerts" class="d-flex gap-2">
+                  <input
+                    type="checkbox"
+                    name="receives_alerts"
+                    {% if user.receives_stock_alerts %}checked{% endif %}
+                    onchange="this.form.submit()"
+                  />
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}

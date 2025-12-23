@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="mb-4">
+    <h2>{{ sku.name }} ({{ sku.sku_code }})</h2>
+    <p class="text-muted mb-1">{{ sku.description or "No description yet." }}</p>
+    {% if sku.vendor_name or sku.vendor_url %}
+      <p class="mb-1">
+        {% if sku.vendor_name %}
+          <strong>Vendor:</strong> {{ sku.vendor_name }}
+        {% endif %}
+        {% if sku.vendor_url %}
+          <br />
+          <a href="{{ sku.vendor_url }}" target="_blank" rel="noreferrer">Vendor page</a>
+        {% endif %}
+      </p>
+    {% endif %}
+    <div class="d-flex gap-3">
+      <span class="badge bg-secondary">Unit: {{ sku.unit_of_measure }}</span>
+      <span class="badge bg-success">Stock: {{ sku.current_stock }}</span>
+      {% if sku.alert_threshold_qty %}
+        <span class="badge bg-warning text-dark">Threshold: {{ sku.alert_threshold_qty }}</span>
+      {% endif %}
+    </div>
+  </div>
+
+  {% set can_manage = current_user and current_user.role.value in ["manager","owner"] %}
+  <div class="row g-4">
+    <div class="col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center">
+            <h3 class="h6">Bill of Materials</h3>
+            <a href="/skus" class="btn btn-sm btn-outline-secondary">Back to list</a>
+          </div>
+          {% if recipes %}
+            <table class="table table-sm mt-3 mb-0">
+              <thead>
+                <tr>
+                  <th>Child SKU</th>
+                  <th>Qty used</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for recipe in recipes %}
+                  <tr>
+                    <td>{{ recipe.child.name }} ({{ recipe.child.sku_code }})</td>
+                    <td>{{ recipe.qty_used }}</td>
+                    <td>
+                      <form method="post" action="/skus/{{ sku.sku_id }}/bom/{{ recipe.id }}/delete">
+                        <button class="btn btn-sm btn-outline-danger" type="submit">Remove</button>
+                      </form>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% else %}
+            <p class="text-muted mt-3">No child SKUs yet.</p>
+          {% endif %}
+          <hr />
+          {% if can_manage %}
+            <form method="post" action="/skus/{{ sku.sku_id }}/bom">
+              <div class="row g-2">
+              <div class="col">
+                <select name="child_sku_id" class="form-select" required>
+                  <option value="">Select SKU</option>
+                  {% for child in available_children %}
+                    <option value="{{ child.sku_id }}">{{ child.name }} ({{ child.sku_code }})</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col">
+                <input type="number" name="qty_used" class="form-control" placeholder="Qty used" step="0.01" required />
+              </div>
+              <div class="col-auto">
+                <button class="btn btn-sm btn-primary">Add</button>
+              </div>
+            </div>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h3 class="h6">Purchase Logs</h3>
+          {% if purchase_logs %}
+            <div class="table-responsive">
+              <table class="table table-sm mt-3">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Qty</th>
+                    <th>Price</th>
+                    <th>Supplier</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for log in purchase_logs %}
+                    <tr>
+                      <td>{{ log.purchase_date.strftime("%Y-%m-%d") }}</td>
+                      <td>{{ log.quantity }}</td>
+                      <td>{{ log.price }}</td>
+                      <td>{{ log.supplier_name or "-" }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <p class="text-muted">No purchase history yet.</p>
+          {% endif %}
+          {% if can_manage %}
+            <a href="#purchase-form" class="btn btn-sm btn-outline-primary mt-2">Add Purchase</a>
+          {% endif %}
+          <canvas id="priceChart" class="mt-4" style="max-height:260px;"></canvas>
+        </div>
+      </div>
+      {% if can_manage %}
+        <div class="card shadow-sm mt-3">
+          <div class="card-body" id="purchase-form">
+            <h3 class="h6">Log Purchase</h3>
+            <form method="post" action="/skus/{{ sku.sku_id }}/purchase-log" class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label visually-hidden">Date</label>
+              <input type="date" name="purchase_date" class="form-control" value="{{ now.strftime('%Y-%m-%d') }}" required />
+            </div>
+            <div class="col-md-6">
+              <label class="form-label visually-hidden">Quantity</label>
+              <input type="number" step="0.01" name="quantity" class="form-control" placeholder="Quantity" required />
+            </div>
+            <div class="col-md-6">
+              <label class="form-label visually-hidden">Price</label>
+              <input type="number" step="0.01" name="price" class="form-control" placeholder="Price" required />
+            </div>
+            <div class="col-md-6">
+              <label class="form-label visually-hidden">Supplier</label>
+              <input type="text" name="supplier_name" class="form-control" placeholder="Supplier name" />
+            </div>
+            <div class="col-12">
+              <input type="url" name="supplier_url" class="form-control" placeholder="Supplier URL" />
+            </div>
+            <div class="col-md-6">
+              <input type="text" name="supplier_code" class="form-control" placeholder="Supplier code" />
+            </div>
+            <div class="col-md-6">
+              <input type="text" name="notes" class="form-control" placeholder="Notes" />
+            </div>
+            <div class="col-12">
+              <button class="btn btn-primary btn-sm">Log Purchase</button>
+            </div>
+          </form>
+        </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.0/dist/chart.umd.min.js"></script>
+  <script>
+    const ctx = document.getElementById("priceChart");
+    if (ctx && ctx.getContext) {
+      new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: {{ price_chart_labels|tojson }},
+          datasets: [
+            {
+              label: "Price history",
+              data: {{ price_chart_values|tojson }},
+              borderColor: "#0d6efd",
+              backgroundColor: "rgba(13, 110, 253, 0.2)",
+              tension: 0.3,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          scales: {
+            y: {
+              ticks: {
+                callback: function (value) {
+                  return "$" + value;
+                },
+              },
+            },
+          },
+        },
+      });
+    }
+  </script>
+{% endblock %}

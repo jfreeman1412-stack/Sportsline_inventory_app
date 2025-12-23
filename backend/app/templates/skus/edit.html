@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h2 class="card-title">Edit Raw Material</h2>
+      <form method="post">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">SKU Code</label>
+            <input type="text" name="sku_code" value="{{ sku.sku_code }}" class="form-control" readonly />
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Name</label>
+            <input type="text" name="name" value="{{ sku.name }}" class="form-control" required />
+          </div>
+          <div class="col-12">
+            <label class="form-label">Description</label>
+            <textarea name="description" rows="2" class="form-control">{{ sku.description }}</textarea>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Vendor</label>
+            <input type="text" name="vendor_name" value="{{ sku.vendor_name }}" class="form-control" />
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Vendor URL</label>
+            <input type="text" name="vendor_url" value="{{ sku.vendor_url }}" class="form-control" placeholder="https://example.com" />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Unit</label>
+            <select name="unit_of_measure" class="form-select">
+              <option value="pieces" {% if sku.unit_of_measure == "pieces" %}selected{% endif %}>Pieces</option>
+              <option value="inches" {% if sku.unit_of_measure == "inches" %}selected{% endif %}>Inches</option>
+              <option value="feet" {% if sku.unit_of_measure == "feet" %}selected{% endif %}>Feet</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Current Stock</label>
+            <input type="number" step="0.01" name="current_stock" value="{{ sku.current_stock }}" class="form-control" />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Waste %</label>
+            <input type="number" step="0.01" name="waste_pct" value="{{ sku.waste_pct }}" class="form-control" />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Alert Threshold</label>
+            <input type="number" step="0.01" name="alert_threshold_qty" value="{{ sku.alert_threshold_qty }}" class="form-control" />
+          </div>
+        </div>
+        <div class="mt-4">
+          <button class="btn btn-primary">Save</button>
+          <a href="/skus/{{ sku.sku_id }}" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

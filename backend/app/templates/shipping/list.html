@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2>Shipping Dimension Mappings</h2>
+    <a href="/shipping/mappings/create" class="btn btn-sm btn-primary">Add Mapping</a>
+  </div>
+  <div class="card shadow-sm">
+    <div class="card-body">
+      {% if mappings %}
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th>Dimensions</th>
+              <th>Package</th>
+              <th>SKUs</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for mapping in mappings %}
+              <tr>
+                <td>
+                  {{ mapping.length if mapping.length is not none else '-' }} ×
+                  {{ mapping.width if mapping.width is not none else '-' }} ×
+                  {{ mapping.height if mapping.height is not none else '-' }}
+                  <br />
+                  <small class="text-muted">{{ mapping.dimensions_string }}</small>
+                </td>
+                <td>{{ mapping.package_code or '—' }}</td>
+                <td>{{ mapping.items_json }}</td>
+                <td class="text-end">
+                  <a href="/shipping/mappings/{{ mapping.id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
+                  <form method="post" action="/shipping/mappings/{{ mapping.id }}/delete" class="d-inline">
+                    <button class="btn btn-sm btn-outline-danger">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="text-muted mb-0">No shipping mappings configured yet.</p>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h2>{{ mode }} Shipping Mapping</h2>
+      <form method="post">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">Dimensions (L x W x H)</label>
+            <div class="input-group">
+              <input
+                type="number"
+                step="0.01"
+                class="form-control"
+                name="length"
+                value="{{ mapping.length if mapping else '' }}"
+                placeholder="Length"
+                required
+              />
+              <input
+                type="number"
+                step="0.01"
+                class="form-control"
+                name="width"
+                value="{{ mapping.width if mapping else '' }}"
+                placeholder="Width"
+                required
+              />
+              <input
+                type="number"
+                step="0.01"
+                class="form-control"
+                name="height"
+                value="{{ mapping.height if mapping else '' }}"
+                placeholder="Height"
+                required
+              />
+            </div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Package Code</label>
+            <input
+              class="form-control"
+              name="package_code"
+              value="{{ mapping.package_code if mapping else '' }}"
+              placeholder="e.g. flat-rate-box"
+            />
+          </div>
+          <div class="col-12">
+            <label class="form-label">Dimensions String (legacy)</label>
+            <input
+              class="form-control"
+              name="dimensions_string"
+              value="{{ mapping.dimensions_string if mapping else '' }}"
+              placeholder="e.g. 12x9x0.25"
+            />
+            <small class="text-muted">Optional fallback if dimensions aren’t provided.</small>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Shipping SKUs (select one or more)</label>
+          <select name="items" class="form-select" multiple size="6" required>
+            {% for sku in skus %}
+              <option value="{{ sku.sku_code }}" {% if sku.sku_code in (selected_items or []) %}selected{% endif %}>
+                {{ sku.name }} ({{ sku.sku_code }})
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary">{{ mode }}</button>
+          <a href="/shipping/mappings" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}
