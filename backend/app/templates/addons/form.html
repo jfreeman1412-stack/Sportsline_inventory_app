@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">
+      {% if mode == "Create" %}Create add-on mapping{% else %}Edit add-on mapping{% endif %}
+    </h1>
+  </div>
+</div>
+
+<form method="post" class="card card-body">
+  <div class="mb-3">
+    <label class="form-label">Add-on Name</label>
+    <input
+      type="text"
+      name="add_on_name"
+      class="form-control"
+      required
+      value="{{ mapping.add_on_name if mapping else '' }}"
+    />
+  </div>
+  <div class="mb-3">
+    <label class="form-label">SKU Code</label>
+    <input
+      type="text"
+      name="sku_code"
+      class="form-control"
+      required
+      value="{{ mapping.sku_code if mapping else '' }}"
+      list="sku-code-list"
+    />
+    <datalist id="sku-code-list">
+      {% for sku in skus %}
+        <option value="{{ sku.sku_code }}">{{ sku.name }}</option>
+      {% endfor %}
+    </datalist>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Quantity to deduct</label>
+    <input
+      type="number"
+      step="0.01"
+      min="0.01"
+      name="quantity"
+      class="form-control"
+      required
+      value="{{ mapping.quantity if mapping else 1 }}"
+    />
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Notes</label>
+    <textarea name="notes" class="form-control" rows="2">{{ mapping.notes or '' }}</textarea>
+  </div>
+  <button class="btn btn-primary">{{ mode }} mapping</button>
+  <a class="btn btn-outline-secondary ms-2" href="/addons">Cancel</a>
+</form>
+{% endblock %}

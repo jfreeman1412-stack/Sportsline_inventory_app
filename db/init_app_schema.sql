@@ -102,3 +102,11 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     details TEXT,
     timestamp DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS add_on_mappings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    add_on_name VARCHAR(255) NOT NULL,
+    sku_code VARCHAR(255) NOT NULL,
+    quantity FLOAT NOT NULL DEFAULT 1.0,
+    notes TEXT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

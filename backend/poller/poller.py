@@ -29,9 +29,9 @@ def main():
     logging.info("Starting poller (interval=%s)", settings.poll_interval_seconds)
     while True:
         try:
-            rows = fetch_order_rows(last_sync)
+            rows, cart_options = fetch_order_rows(last_sync)
             if rows:
-                orders = group_orders(rows)
+                orders = group_orders(rows, cart_options)
                 emit_payload(orders)
                 last_sync = datetime.utcnow()
                 logging.info("Synced %d orders", len(orders))

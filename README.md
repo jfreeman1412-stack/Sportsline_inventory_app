@@ -89,6 +89,10 @@ Use the **Products** UI to keep your catalog, BOMs, and prices up to date so ded
 
 Managers and Owners can now audit raw-material deductions at `/logs/deductions`. The page lists the date/time, order number, action (printed/shipped), employee, and a short summary, with a collapsible detail row showing every SKU and quantity that was deducted. Use the search box to filter by order number when validating specific syncs.
 
+### Add-on SKU Mapping
+
+Add-on options from `ms_cart_options` now deduct their own SKUs. Use the **Add-on SKUs** page (Managers/Owners only) to assign SKUs and quantities to each legacy add-on name so the sync automatically applies those deductions when the option appears on an order line.
+
 ### Development Notes
 
 - Backend tests (Pytest) target 80% coverage eventually.

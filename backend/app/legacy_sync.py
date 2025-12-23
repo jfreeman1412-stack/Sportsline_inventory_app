@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timedelta
 
 import pymysql
@@ -12,6 +13,7 @@ SELECT
     l.order_id,
     l.update_date AS order_date,
     l.order_open_status AS order_open_status,
+    c.cart_id,
     c.cart_sku,
     c.cart_qty
 FROM ms_order_status_logs l
@@ -45,7 +47,7 @@ def get_last_sync_timestamp() -> datetime:
     return datetime.utcnow() - timedelta(minutes=5)
 
 
-def fetch_order_rows(since: datetime) -> list[dict]:
+def fetch_order_rows(since: datetime) -> tuple[list[dict], dict[int, list[str]]]:
     connection = pymysql.connect(
         host=settings.mysql_host,
         port=settings.mysql_port,
@@ -57,12 +59,35 @@ def fetch_order_rows(since: datetime) -> list[dict]:
     try:
         with connection.cursor() as cursor:
             cursor.execute(SYNC_QUERY, (since,))
-            return cursor.fetchall()
+            rows = cursor.fetchall()
+        cart_ids = {row["cart_id"] for row in rows if row.get("cart_id")}
+        options = _fetch_cart_options(cart_ids, connection)
+        return rows, options
     finally:
         connection.close()
 
 
-def group_orders(rows: list[dict]) -> list[dict]:
+def _fetch_cart_options(cart_ids: set[int], connection) -> dict[int, list[str]]:
+    if not cart_ids:
+        return {}
+    placeholders = ",".join(["%s"] * len(cart_ids))
+    query = f"""
+        SELECT co_cart_id, TRIM(co_opt_name) AS add_on_name
+        FROM ms_cart_options
+        WHERE co_cart_id IN ({placeholders});
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(query, tuple(cart_ids))
+        rows = cursor.fetchall()
+    result: dict[int, list[str]] = defaultdict(list)
+    for row in rows:
+        name = row.get("add_on_name")
+        if name:
+            result[int(row["co_cart_id"])].append(name)
+    return result
+
+
+def group_orders(rows: list[dict], cart_options: dict[int, list[str]]) -> list[dict]:
     grouped: dict[int, dict] = {}
     for row in rows:
         order_id = int(row["order_id"])
@@ -73,8 +98,14 @@ def group_orders(rows: list[dict]) -> list[dict]:
                 "order_open_status": int(row["order_open_status"]),
                 "line_items": [],
             }
+        add_ons = cart_options.get(row.get("cart_id"), [])
         grouped[order_id]["line_items"].append(
-            {"cart_sku": row["cart_sku"], "cart_qty": float(row["cart_qty"])}
+            {
+                "cart_sku": row["cart_sku"],
+                "cart_qty": float(row["cart_qty"]),
+                "cart_id": row.get("cart_id"),
+                "add_ons": add_ons,
+            }
         )
     return list(grouped.values())
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timedelta
 import logging
 
@@ -13,7 +14,16 @@ from ..auth import ensure_manager_or_owner
 from ..config import settings
 from ..database import get_db
 from ..legacy_sync import fetch_order_rows, group_orders, get_legacy_product_name
-from ..models import AuditLog, Product, ProductRecipe, SKU, SKURecipe, SyncLog, User
+from ..models import (
+    AddOnMapping,
+    AuditLog,
+    Product,
+    ProductRecipe,
+    SKU,
+    SKURecipe,
+    SyncLog,
+    User,
+)
 from ..notifications import notify_stock_alert
 from ..schemas import OrderPayload, SyncPayload
 from .shipstation import (
@@ -43,6 +53,63 @@ def _record_sync(
     if timestamp:
         log.timestamp = timestamp
     db.add(log)
+
+
+def _normalize_addon_name(name: str | None) -> str:
+    if not name:
+        return ""
+    return name.strip().lower()
+
+
+def _load_addon_mappings(db: Session) -> dict[str, list[AddOnMapping]]:
+    result: dict[str, list[AddOnMapping]] = defaultdict(list)
+    mappings = db.scalars(select(AddOnMapping)).all()
+    for mapping in mappings:
+        normalized = _normalize_addon_name(mapping.add_on_name)
+        result[normalized].append(mapping)
+    return result
+
+
+def _apply_addon_mapping(
+    db: Session,
+    order_id: int,
+    add_on_name: str,
+    addon_mappings: dict[str, list[AddOnMapping]],
+    timestamp: datetime | None,
+) -> None:
+    normalized = _normalize_addon_name(add_on_name)
+    if not normalized:
+        return
+    entries = addon_mappings.get(normalized)
+    if not entries:
+        _record_sync(
+            db,
+            order_id,
+            "addon-unmapped",
+            f"Add-on {add_on_name} missing SKU mapping",
+            timestamp=timestamp,
+        )
+        return
+    for mapping in entries:
+        sku = db.scalar(select(SKU).where(SKU.sku_code == mapping.sku_code))
+        if not sku:
+            _record_sync(
+                db,
+                order_id,
+                "addon-missing-sku",
+                f"Add-on {mapping.add_on_name} mapping references unknown SKU {mapping.sku_code}",
+                timestamp=timestamp,
+            )
+            continue
+        _deduct_child(
+            db,
+            order_id,
+            sku,
+            mapping.quantity,
+            f"Add-on {mapping.add_on_name}",
+            product_name=f"Add-on {mapping.add_on_name}",
+            product_quantity=mapping.quantity,
+        )
 
 
 def _deduct_child(
@@ -75,7 +142,9 @@ def _deduct_child(
     )
 
 
-def _process_print_order(db: Session, order: OrderPayload) -> None:
+def _process_print_order(
+    db: Session, order: OrderPayload, addon_mappings: dict[str, list[AddOnMapping]]
+) -> None:
     for line in order.line_items:
         product = db.scalar(select(Product).where(Product.product_code == line.cart_sku))
         line_qty = float(line.cart_qty)
@@ -100,17 +169,17 @@ def _process_print_order(db: Session, order: OrderPayload) -> None:
                     timestamp=order.order_date,
                 )
                 continue
-            for recipe in recipes:
-                _deduct_child(
-                    db,
-                    order.order_id,
-                    recipe.child,
-                    recipe.qty_used * line.cart_qty,
-                    f"product {product.product_code}",
-                    product_code=product_code_value,
-                    product_name=product_display_name,
-                    product_quantity=line_qty,
-                )
+        for recipe in recipes:
+            _deduct_child(
+                db,
+                order.order_id,
+                recipe.child,
+                recipe.qty_used * line.cart_qty,
+                f"product {product.product_code}",
+                product_code=product_code_value,
+                product_name=product_display_name,
+                product_quantity=line_qty,
+            )
             continue
         sku = db.scalar(select(SKU).where(SKU.sku_code == line.cart_sku))
         if not sku:
@@ -145,6 +214,8 @@ def _process_print_order(db: Session, order: OrderPayload) -> None:
                 product_name=product_display_name,
                 product_quantity=line_qty,
             )
+        for add_on in line.add_ons or []:
+            _apply_addon_mapping(db, order.order_id, add_on, addon_mappings, order.order_date)
     _record_sync(
         db,
         order.order_id,
@@ -182,6 +253,7 @@ def _process_shipping_wait(db: Session, order: OrderPayload) -> None:
 
 def _handle_orders(db: Session, orders: list[OrderPayload], action_label: str) -> int:
     processed = 0
+    addon_mappings = _load_addon_mappings(db)
     for order in orders:
         existing = db.scalar(
             select(SyncLog).where(
@@ -199,7 +271,7 @@ def _handle_orders(db: Session, orders: list[OrderPayload], action_label: str) -
             timestamp=order.order_date,
         )
         if order.order_open_status == 40:
-            _process_print_order(db, order)
+            _process_print_order(db, order, addon_mappings)
             processed += 1
         elif order.order_open_status == 39:
             _process_shipping_wait(db, order)
@@ -222,8 +294,8 @@ def _latest_sync_timestamp(db: Session) -> datetime:
     return datetime.utcnow() - timedelta(seconds=fallback_seconds)
 
 
-def _build_orders_from_rows(rows: list[dict]) -> list[OrderPayload]:
-    grouped = group_orders(rows)
+def _build_orders_from_rows(rows: list[dict], cart_options: dict[int, list[str]]) -> list[OrderPayload]:
+    grouped = group_orders(rows, cart_options)
     return [
         OrderPayload(
             order_id=item["order_id"],
@@ -260,10 +332,10 @@ def force_sync(
     _: User = Depends(ensure_manager_or_owner),
 ):
     since = _latest_sync_timestamp(db)
-    rows = fetch_order_rows(since)
+    rows, cart_options = fetch_order_rows(since)
     if not rows:
         return PlainTextResponse("No new orders found")
-    orders = _build_orders_from_rows(rows)
+    orders = _build_orders_from_rows(rows, cart_options)
     processed = 0
     try:
         processed = _handle_orders(db, orders, action_label="force-sync")

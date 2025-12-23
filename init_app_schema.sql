@@ -81,3 +81,11 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     details TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS add_on_mappings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    add_on_name VARCHAR(255) NOT NULL,
+    sku_code VARCHAR(255) NOT NULL,
+    quantity FLOAT NOT NULL DEFAULT 1.0,
+    notes TEXT
+);

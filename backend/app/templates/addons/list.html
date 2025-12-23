@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">Add-on SKU Mapping</h1>
+    <p class="text-muted mb-0">Assign SKUs and quantities to legacy add-on options.</p>
+  </div>
+  <a class="btn btn-primary" href="/addons/create">New Mapping</a>
+</div>
+
+<div class="table-responsive">
+  <table class="table table-striped table-bordered">
+    <thead class="table-light">
+      <tr>
+        <th>Add-on Name</th>
+        <th>SKU Code</th>
+        <th>Quantity</th>
+        <th>Notes</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for mapping in mappings %}
+        <tr>
+          <td>{{ mapping.add_on_name }}</td>
+          <td>{{ mapping.sku_code }}</td>
+          <td>{{ mapping.quantity }}</td>
+          <td>{{ mapping.notes or "-" }}</td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-secondary" href="/addons/{{ mapping.id }}/edit">Edit</a>
+            <form method="post" action="/addons/{{ mapping.id }}/delete" class="d-inline">
+              <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

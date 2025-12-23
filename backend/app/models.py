@@ -161,3 +161,13 @@ class AuditLog(Base):
     product_quantity = Column(Float, nullable=True)
     details = Column(Text, nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AddOnMapping(Base):
+    __tablename__ = "add_on_mappings"
+
+    id = Column(Integer, primary_key=True)
+    add_on_name = Column(String(255), nullable=False)
+    sku_code = Column(String(255), nullable=False)
+    quantity = Column(Float, nullable=False, default=1.0)
+    notes = Column(Text, nullable=True)

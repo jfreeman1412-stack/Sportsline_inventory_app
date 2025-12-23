@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 class OrderLineItemPayload(BaseModel):
     cart_sku: str
     cart_qty: float = Field(gt=0)
+    cart_id: int | None = None
+    add_ons: list[str] = Field(default_factory=list)
 
 
 class OrderPayload(BaseModel):
