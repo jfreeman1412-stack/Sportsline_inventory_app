@@ -58,6 +58,9 @@ def create_sku(
     description: str | None = Form(None),
     vendor_name: str | None = Form(None),
     vendor_url: str | None = Form(None),
+    salesman_name: str | None = Form(None),
+    salesman_phone: str | None = Form(None),
+    salesman_email: str | None = Form(None),
     unit_of_measure: str = Form("pieces"),
     current_stock: float = Form(0.0),
     waste_pct: float = Form(0.0),
@@ -75,6 +78,9 @@ def create_sku(
         alert_threshold_qty=alert_threshold_qty,
         vendor_name=vendor_name.strip() if vendor_name else None,
         vendor_url=vendor_url.strip() if vendor_url else None,
+        salesman_name=salesman_name.strip() if salesman_name else None,
+        salesman_phone=salesman_phone.strip() if salesman_phone else None,
+        salesman_email=salesman_email.strip() if salesman_email else None,
     )
     db.add(sku)
     try:
@@ -139,6 +145,9 @@ def edit_sku(
     description: str | None = Form(None),
     vendor_name: str | None = Form(None),
     vendor_url: str | None = Form(None),
+    salesman_name: str | None = Form(None),
+    salesman_phone: str | None = Form(None),
+    salesman_email: str | None = Form(None),
     unit_of_measure: str = Form("pieces"),
     current_stock: float = Form(0.0),
     waste_pct: float = Form(0.0),
@@ -155,6 +164,9 @@ def edit_sku(
     sku.alert_threshold_qty = alert_threshold_qty
     sku.vendor_name = vendor_name.strip() if vendor_name else None
     sku.vendor_url = vendor_url.strip() if vendor_url else None
+    sku.salesman_name = salesman_name.strip() if salesman_name else None
+    sku.salesman_phone = salesman_phone.strip() if salesman_phone else None
+    sku.salesman_email = salesman_email.strip() if salesman_email else None
     db.commit()
     notify_stock_alert(db, sku)
     return RedirectResponse(url=f"/skus/{sku.sku_id}", status_code=303)
@@ -246,6 +258,69 @@ def add_purchase_log(
     previous_price = previous_log[0].price if previous_log else None
     sku.current_stock += quantity
     db.add(log)
+    db.commit()
+    notify_stock_alert(db, sku)
+    if previous_price and price > previous_price * 1.1:
+        notify_price_spike(db, sku, previous_price, price)
+    return RedirectResponse(url=f"/skus/{sku.sku_id}", status_code=303)
+
+
+@router.get("/{sku_id}/purchase-log/{log_id}/edit")
+def edit_purchase_log_form(
+    request: Request,
+    sku_id: int,
+    log_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(ensure_manager_or_owner),
+):
+    sku = _get_sku_or_404(db, sku_id)
+    log = db.scalar(select(PurchaseLog).where(PurchaseLog.id == log_id))
+    if not log or log.sku_id != sku.sku_id:
+        raise HTTPException(status_code=404, detail="Purchase log not found")
+    return templates.TemplateResponse(
+        "skus/purchase_edit.html",
+        {"request": request, "sku": sku, "log": log, "current_user": current_user},
+    )
+
+
+@router.post("/{sku_id}/purchase-log/{log_id}/edit")
+def edit_purchase_log(
+    request: Request,
+    sku_id: int,
+    log_id: int,
+    purchase_date: str = Form(...),
+    quantity: float = Form(...),
+    price: float = Form(...),
+    supplier_name: str | None = Form(None),
+    supplier_url: str | None = Form(None),
+    supplier_code: str | None = Form(None),
+    notes: str | None = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(ensure_manager_or_owner),
+):
+    sku = _get_sku_or_404(db, sku_id)
+    log = db.scalar(select(PurchaseLog).where(PurchaseLog.id == log_id))
+    if not log or log.sku_id != sku.sku_id:
+        raise HTTPException(status_code=404, detail="Purchase log not found")
+    previous_logs = (
+        db.scalars(
+            select(PurchaseLog)
+            .where(PurchaseLog.sku_id == sku.sku_id, PurchaseLog.id != log.id)
+            .order_by(PurchaseLog.purchase_date.desc())
+            .limit(1)
+        )
+        .all()
+    )
+    previous_price = previous_logs[0].price if previous_logs else None
+    delta_qty = quantity - log.quantity
+    sku.current_stock += delta_qty
+    log.purchase_date = date.fromisoformat(purchase_date)
+    log.quantity = quantity
+    log.price = price
+    log.supplier_name = supplier_name
+    log.supplier_url = supplier_url
+    log.supplier_code = supplier_code
+    log.notes = notes
     db.commit()
     notify_stock_alert(db, sku)
     if previous_price and price > previous_price * 1.1:

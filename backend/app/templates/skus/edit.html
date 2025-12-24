@@ -27,6 +27,18 @@
             <input type="text" name="vendor_url" value="{{ sku.vendor_url }}" class="form-control" placeholder="https://example.com" />
           </div>
           <div class="col-md-4">
+            <label class="form-label">Salesman</label>
+            <input type="text" name="salesman_name" class="form-control" value="{{ sku.salesman_name or '' }}" />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Salesman Phone</label>
+            <input type="text" name="salesman_phone" class="form-control" value="{{ sku.salesman_phone or '' }}" />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Salesman Email</label>
+            <input type="email" name="salesman_email" class="form-control" value="{{ sku.salesman_email or '' }}" />
+          </div>
+          <div class="col-md-4">
             <label class="form-label">Unit</label>
             <select name="unit_of_measure" class="form-select">
               <option value="pieces" {% if sku.unit_of_measure == "pieces" %}selected{% endif %}>Pieces</option>

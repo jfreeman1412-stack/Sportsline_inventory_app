@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS skus (
     sku_code VARCHAR(255) UNIQUE NOT NULL,  -- Matches legacy pp_internal_name/cart_sku
     name VARCHAR(255) NOT NULL,
     description TEXT,
+    salesman_name VARCHAR(255),
+    salesman_phone VARCHAR(64),
+    salesman_email VARCHAR(255),
     unit_of_measure ENUM('inches', 'feet', 'pieces') NOT NULL DEFAULT 'pieces',
     current_stock FLOAT NOT NULL DEFAULT 0.0,
     waste_pct FLOAT NOT NULL DEFAULT 0.0,
@@ -35,7 +38,7 @@ CREATE TABLE IF NOT EXISTS purchase_logs (
     sku_id INT NOT NULL,
     purchase_date DATE NOT NULL,
     quantity FLOAT NOT NULL,
-    price DECIMAL(10,2) NOT NULL,
+    price DECIMAL(18,6) NOT NULL,
     supplier_name VARCHAR(255),
     supplier_url VARCHAR(512),
     supplier_code VARCHAR(255),

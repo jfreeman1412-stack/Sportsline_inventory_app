@@ -72,6 +72,7 @@ ALTER TABLE shipping_mapping MODIFY COLUMN dimensions_string VARCHAR(64) NULL;
 `
 
 - **Vendor info**: each raw material now captures a `vendor_name` and optional `vendor_url` so you can jump to the supplier listing from the SKU detail page and keep buying links alongside stock data.
+- **Sales contacts**: new fields let you record the salesman name, phone, and email for every raw material so you can always reach the rep directly from the SKU detail and form screens.
 - **Products**: the finished goods that customers order. Add each product (matching `cart_sku`/`product_code`) with a BOM that pulls from your raw materials. The sync process deducts raw materials by exploding the product recipe; legacy sync still falls back to raw SKU-based BOMs if a product entry is missing.
 
 Use the **Products** UI to keep your catalog, BOMs, and prices up to date so deductions align with actual production consumption.

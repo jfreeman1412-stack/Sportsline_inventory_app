@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h1 class="h4 mb-3">Edit Purchase - {{ sku.name }} ({{ log.id }})</h1>
+      <form method="post" action="/skus/{{ sku.sku_id }}/purchase-log/{{ log.id }}/edit" class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">Date</label>
+          <input
+            type="date"
+            name="purchase_date"
+            class="form-control"
+            value="{{ log.purchase_date.strftime('%Y-%m-%d') }}"
+            required
+          />
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Quantity</label>
+          <input type="number" step="0.0001" name="quantity" class="form-control" value="{{ log.quantity }}" required />
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Price</label>
+          <input
+            type="number"
+            step="0.000001"
+            name="price"
+            class="form-control"
+            value="{{ log.price }}"
+            required
+          />
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Supplier Name</label>
+          <input type="text" name="supplier_name" class="form-control" value="{{ log.supplier_name or '' }}" />
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Supplier URL</label>
+          <input type="url" name="supplier_url" class="form-control" value="{{ log.supplier_url or '' }}" />
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Supplier Code</label>
+          <input type="text" name="supplier_code" class="form-control" value="{{ log.supplier_code or '' }}" />
+        </div>
+        <div class="col-12">
+          <label class="form-label">Notes</label>
+          <textarea name="notes" class="form-control" rows="2">{{ log.notes or '' }}</textarea>
+        </div>
+        <div class="col-12">
+          <button class="btn btn-primary">Save changes</button>
+          <a class="btn btn-outline-secondary ms-2" href="/skus/{{ sku.sku_id }}">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}
