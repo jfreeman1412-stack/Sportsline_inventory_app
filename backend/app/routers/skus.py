@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import ensure_manager_or_owner, get_current_user
 from ..database import get_db
-from ..models import PurchaseLog, SKU, SKURecipe, User
+from ..models import PurchaseLog, SKU, SKURecipe, Tag, User
 from ..notifications import notify_price_spike, notify_stock_alert
 
 BASE_TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
@@ -25,6 +25,10 @@ def _get_sku_or_404(db: Session, sku_id: int) -> SKU:
     if not sku:
         raise HTTPException(status_code=404, detail="SKU not found")
     return sku
+
+
+def _get_all_tags(db: Session) -> list[Tag]:
+    return db.scalars(select(Tag).order_by(Tag.name)).all()
 
 
 def _calculate_price_pct_changes(logs: list[PurchaseLog]) -> list[dict[str, str | int] | None]:
@@ -45,11 +49,20 @@ def _calculate_price_pct_changes(logs: list[PurchaseLog]) -> list[dict[str, str 
     return pct_changes
 
 
+def _sync_tags(db: Session, sku: SKU, tag_ids: list[int] | None):
+    if tag_ids:
+        tags = db.scalars(select(Tag).where(Tag.tag_id.in_(tag_ids))).all()
+    else:
+        tags = []
+    sku.tags = tags
+
+
 @router.get("/")
 def list_skus(
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    tag_id: int | None = None,
     sort_by: str = "name",
     sort_dir: str = "asc",
 ):
@@ -64,7 +77,11 @@ def list_skus(
     column = column_map.get(sort_by, SKU.name)
     direction = "desc" if sort_dir.lower() == "desc" else "asc"
     order = desc(column) if direction == "desc" else asc(column)
-    skus = db.scalars(select(SKU).order_by(order)).all()
+    available_tags = _get_all_tags(db)
+    query = select(SKU)
+    if tag_id:
+        query = query.join(SKU.tags).where(Tag.tag_id == tag_id)
+    skus = db.scalars(query.order_by(order)).all()
     return templates.TemplateResponse(
         "skus/list.html",
         {
@@ -73,17 +90,25 @@ def list_skus(
             "current_user": current_user,
             "sort_by": sort_by,
             "sort_dir": direction,
+            "available_tags": available_tags,
+            "selected_tag": next((t for t in available_tags if t.tag_id == tag_id), None),
         },
     )
 
 
 @router.get("/create")
 def create_sku_form(
-    request: Request, current_user: User = Depends(ensure_manager_or_owner)
+    request: Request,
+    current_user: User = Depends(ensure_manager_or_owner),
+    db: Session = Depends(get_db),
 ):
     return templates.TemplateResponse(
         "skus/create.html",
-        {"request": request, "current_user": current_user},
+        {
+            "request": request,
+            "current_user": current_user,
+            "available_tags": _get_all_tags(db),
+        },
     )
 
 
@@ -102,6 +127,7 @@ def create_sku(
     current_stock: float = Form(0.0),
     waste_pct: float = Form(0.0),
     alert_threshold_qty: float | None = Form(None),
+    tag_ids: list[int] | None = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(ensure_manager_or_owner),
 ):
@@ -119,6 +145,7 @@ def create_sku(
         salesman_phone=salesman_phone.strip() if salesman_phone else None,
         salesman_email=salesman_email.strip() if salesman_email else None,
     )
+    _sync_tags(db, sku, tag_ids)
     db.add(sku)
     try:
         db.commit()
@@ -162,6 +189,7 @@ def sku_detail(
             "now": datetime.utcnow(),
             "current_user": current_user,
             "last_purchase": last_purchase,
+            "available_tags": _get_all_tags(db),
         },
     )
 
@@ -174,7 +202,14 @@ def edit_sku_form(
     current_user: User = Depends(ensure_manager_or_owner),
 ):
     sku = _get_sku_or_404(db, sku_id)
-    return templates.TemplateResponse("skus/edit.html", {"request": request, "sku": sku})
+    return templates.TemplateResponse(
+        "skus/edit.html",
+        {
+            "request": request,
+            "sku": sku,
+            "available_tags": _get_all_tags(db),
+        },
+    )
 
 
 @router.post("/{sku_id}/edit")
@@ -192,6 +227,7 @@ def edit_sku(
     current_stock: float = Form(0.0),
     waste_pct: float = Form(0.0),
     alert_threshold_qty: float | None = Form(None),
+    tag_ids: list[int] | None = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(ensure_manager_or_owner),
 ):
@@ -202,6 +238,7 @@ def edit_sku(
     sku.current_stock = current_stock
     sku.waste_pct = waste_pct
     sku.alert_threshold_qty = alert_threshold_qty
+    _sync_tags(db, sku, tag_ids)
     sku.vendor_name = vendor_name.strip() if vendor_name else None
     sku.vendor_url = vendor_url.strip() if vendor_url else None
     sku.salesman_name = salesman_name.strip() if salesman_name else None

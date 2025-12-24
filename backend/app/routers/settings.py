@@ -8,11 +8,15 @@ from sqlalchemy.orm import Session
 
 from ..auth import ensure_manager_or_owner, get_current_user
 from ..database import get_db
-from ..models import RoleEnum, User
+from ..models import RoleEnum, Tag, User
 from ..services.app_settings import get_app_settings
 
 router = APIRouter(tags=["settings"])
 templates = Jinja2Templates(directory="backend/app/templates")
+
+
+def _get_all_tags(db: Session) -> list[Tag]:
+    return db.scalars(select(Tag).order_by(Tag.name)).all()
 
 
 @router.get("/settings")
@@ -32,7 +36,8 @@ def settings_page(
             "current_user": current_user,
             "users": users,
             "setting": setting,
-            "title": "Settings",
+        "tags": _get_all_tags(db),
+        "title": "Settings",
         },
     )
 
@@ -71,4 +76,22 @@ def update_system_settings(
     settings_model.price_spike_pct = price_spike_pct if price_spike_pct is not None else settings_model.price_spike_pct
     settings_model.low_stock_cta = low_stock_cta.strip() if low_stock_cta else None
     db.commit()
-    return RedirectResponse(url="/settings/system", status_code=302)
+    return RedirectResponse(url="/settings", status_code=302)
+
+
+@router.post("/settings/tags")
+def create_tag(
+    tag_name: str = Form(...),
+    tag_color: str | None = Form(None),
+    current_user=Depends(ensure_manager_or_owner),
+    db: Session = Depends(get_db),
+):
+    trimmed = tag_name.strip()
+    if not trimmed:
+        return RedirectResponse(url="/settings", status_code=302)
+    exists = db.scalar(select(Tag).where(Tag.name == trimmed))
+    if not exists:
+        tag = Tag(name=trimmed, color=tag_color.strip() if tag_color else None)
+        db.add(tag)
+        db.commit()
+    return RedirectResponse(url="/settings", status_code=302)

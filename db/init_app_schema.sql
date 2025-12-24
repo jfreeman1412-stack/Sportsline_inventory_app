@@ -103,6 +103,21 @@ CREATE TABLE IF NOT EXISTS app_settings (
     low_stock_cta VARCHAR(512)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS tags (
+    tag_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(64) UNIQUE NOT NULL,
+    color VARCHAR(32),
+    description TEXT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS sku_tags (
+    sku_id INT NOT NULL,
+    tag_id INT NOT NULL,
+    PRIMARY KEY(sku_id, tag_id),
+    FOREIGN KEY (sku_id) REFERENCES skus(sku_id) ON DELETE CASCADE,
+    FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 INSERT INTO app_settings (email_alerts_enabled, price_spike_pct)
 SELECT 1, 10.0 FROM (SELECT 1) AS tmp
 WHERE NOT EXISTS (SELECT 1 FROM app_settings);

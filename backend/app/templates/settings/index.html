@@ -133,5 +133,33 @@
         </form>
       </div>
     </div>
+    <div class="card shadow-sm mt-4">
+      <div class="card-body">
+        <h2 class="h5 mb-3">Tags</h2>
+        <div class="mb-3">
+          {% for tag in tags %}
+            <span
+              class="badge rounded-pill me-1"
+              style="background-color: {{ tag.color or '#6c757d' }}; color: #fff;"
+            >
+              {{ tag.name }}
+            </span>
+          {% endfor %}
+        </div>
+        <form method="post" action="/settings/tags" class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">Tag name</label>
+            <input type="text" name="tag_name" class="form-control" required />
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Color (hex)</label>
+            <input type="text" name="tag_color" class="form-control" placeholder="#0d6efd" />
+          </div>
+          <div class="col-12">
+            <button class="btn btn-sm btn-outline-primary">Add tag</button>
+          </div>
+        </form>
+      </div>
+    </div>
   {% endif %}
 {% endblock %}

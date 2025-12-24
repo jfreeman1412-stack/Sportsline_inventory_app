@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Table,
     Text,
     func,
 )
@@ -51,6 +52,7 @@ class SKU(Base):
         back_populates="child",
         foreign_keys="ProductRecipe.child_sku_id",
     )
+    tags = relationship("Tag", secondary="sku_tags", back_populates="skus")
 
 
 class SKURecipe(Base):
@@ -179,6 +181,24 @@ class AppSetting(Base):
     smtp_from = Column(String(255), nullable=True)
     price_spike_pct = Column(Float, nullable=False, default=10.0)
     low_stock_cta = Column(String(512), nullable=True)
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+
+    tag_id = Column(Integer, primary_key=True)
+    name = Column(String(64), unique=True, nullable=False)
+    color = Column(String(32), nullable=True)
+    description = Column(Text, nullable=True)
+    skus = relationship("SKU", secondary="sku_tags", back_populates="tags")
+
+
+sku_tags = Table(
+    "sku_tags",
+    Base.metadata,
+    Column("sku_id", Integer, ForeignKey("skus.sku_id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", Integer, ForeignKey("tags.tag_id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class AddOnMapping(Base):

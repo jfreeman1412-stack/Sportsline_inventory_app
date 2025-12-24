@@ -26,14 +26,26 @@
         {% endif %}
       </p>
     {% endif %}
-    <div class="d-flex gap-3">
-      <span class="badge bg-secondary">Unit: {{ sku.unit_of_measure }}</span>
-      <span class="badge bg-success">Stock: {{ sku.current_stock }}</span>
-      {% if sku.alert_threshold_qty %}
-        <span class="badge bg-warning text-dark">Threshold: {{ sku.alert_threshold_qty }}</span>
+      <div class="d-flex gap-3">
+        <span class="badge bg-secondary">Unit: {{ sku.unit_of_measure }}</span>
+        <span class="badge bg-success">Stock: {{ sku.current_stock }}</span>
+        {% if sku.alert_threshold_qty %}
+          <span class="badge bg-warning text-dark">Threshold: {{ sku.alert_threshold_qty }}</span>
+        {% endif %}
+      </div>
+      {% if sku.tags %}
+        <div class="mt-2">
+          {% for tag in sku.tags %}
+            <span
+              class="badge rounded-pill me-1"
+              style="background-color: {{ tag.color or '#6c757d' }}; color: #fff;"
+            >
+              {{ tag.name }}
+            </span>
+          {% endfor %}
+        </div>
       {% endif %}
     </div>
-  </div>
 
   {% set can_manage = current_user and current_user.role.value in ["manager","owner"] %}
   <div class="row g-4">
@@ -189,6 +201,19 @@
                 <input class="form-check-input" type="checkbox" name="add_to_stock" id="addToStock" checked />
                 <label class="form-check-label" for="addToStock">Add to stock</label>
               </div>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Tags</label>
+              <select name="tag_ids" class="form-select" multiple>
+                {% for tag in available_tags %}
+                  <option
+                    value="{{ tag.tag_id }}"
+                    {% if tag in sku.tags %}selected{% endif %}
+                  >
+                    {{ tag.name }}
+                  </option>
+                {% endfor %}
+              </select>
             </div>
             <div class="col-md-6">
               <label class="form-label visually-hidden">Supplier</label>

@@ -9,6 +9,20 @@
   </div>
 
   <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="d-flex gap-2 flex-wrap mb-2">
+        <strong class="me-2">Filter:</strong>
+        <a class="btn btn-sm btn-outline-secondary {% if not selected_tag %}active{% endif %}" href="/skus">All</a>
+        {% for tag in available_tags %}
+          <a
+            class="btn btn-sm btn-outline-secondary {% if selected_tag and selected_tag.tag_id == tag.tag_id %}active{% endif %}"
+            href="/skus?tag={{ tag.tag_id }}"
+          >
+            {{ tag.name }}
+          </a>
+        {% endfor %}
+      </div>
+    </div>
     <div class="card-body p-0">
       {% macro sortable_header(label, key) -%}
         {% set active = sort_by == key %}
@@ -27,6 +41,7 @@
             <th>{{ sortable_header("SKU", "sku_code") }}</th>
             <th>{{ sortable_header("Unit", "unit") }}</th>
             <th>{{ sortable_header("Vendor", "vendor") }}</th>
+            <th>Tags</th>
             <th>{{ sortable_header("Stock", "stock") }}</th>
             <th>{{ sortable_header("Threshold", "threshold") }}</th>
             <th>Actions</th>
@@ -44,6 +59,14 @@
                   <br />
                   <a href="{{ sku.vendor_url }}" target="_blank" rel="noreferrer">Vendor page</a>
                 {% endif %}
+              </td>
+              <td>
+                {% for tag in sku.tags %}
+                  <span class="badge rounded-pill me-1"
+                    style="background-color: {{ tag.color or '#6c757d' }}; color: #fff;"
+                    >{{ tag.name }}</span
+                  >
+                {% endfor %}
               </td>
               <td>{{ sku.current_stock }}</td>
               <td>{{ sku.alert_threshold_qty or "—" }}</td>
