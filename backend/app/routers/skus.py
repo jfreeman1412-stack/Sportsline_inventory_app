@@ -232,15 +232,18 @@ def add_purchase_log(
     supplier_url: str | None = Form(None),
     supplier_code: str | None = Form(None),
     notes: str | None = Form(None),
+    add_to_stock: str | None = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(ensure_manager_or_owner),
 ):
     sku = _get_sku_or_404(db, sku_id)
+    applies_to_stock = add_to_stock is not None
     log = PurchaseLog(
         sku_id=sku.sku_id,
         purchase_date=date.fromisoformat(purchase_date),
         quantity=quantity,
         price=price,
+        applies_to_stock=applies_to_stock,
         supplier_name=supplier_name,
         supplier_url=supplier_url,
         supplier_code=supplier_code,
@@ -256,7 +259,8 @@ def add_purchase_log(
         .all()
     )
     previous_price = previous_log[0].price if previous_log else None
-    sku.current_stock += quantity
+    if applies_to_stock:
+        sku.current_stock += quantity
     db.add(log)
     db.commit()
     notify_stock_alert(db, sku)
@@ -295,6 +299,7 @@ def edit_purchase_log(
     supplier_url: str | None = Form(None),
     supplier_code: str | None = Form(None),
     notes: str | None = Form(None),
+    add_to_stock: str | None = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(ensure_manager_or_owner),
 ):
@@ -312,15 +317,18 @@ def edit_purchase_log(
         .all()
     )
     previous_price = previous_logs[0].price if previous_logs else None
-    delta_qty = quantity - log.quantity
-    sku.current_stock += delta_qty
+    if log.applies_to_stock:
+        sku.current_stock -= log.quantity
     log.purchase_date = date.fromisoformat(purchase_date)
     log.quantity = quantity
     log.price = price
+    log.applies_to_stock = add_to_stock is not None
     log.supplier_name = supplier_name
     log.supplier_url = supplier_url
     log.supplier_code = supplier_code
     log.notes = notes
+    if log.applies_to_stock:
+        sku.current_stock += quantity
     db.commit()
     notify_stock_alert(db, sku)
     if previous_price and price > previous_price * 1.1:

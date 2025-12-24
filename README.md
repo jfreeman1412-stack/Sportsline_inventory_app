@@ -73,6 +73,8 @@ ALTER TABLE shipping_mapping MODIFY COLUMN dimensions_string VARCHAR(64) NULL;
 
 - **Vendor info**: each raw material now captures a `vendor_name` and optional `vendor_url` so you can jump to the supplier listing from the SKU detail page and keep buying links alongside stock data.
 - **Sales contacts**: new fields let you record the salesman name, phone, and email for every raw material so you can always reach the rep directly from the SKU detail and form screens.
+- **Purchase logs**: the raw-material purchase form (and edit flow) now exposes an “Add to stock” checkbox (checked by default) plus the back-datable `purchase_date` input so you can record historical price points without touching current stock. The `purchase_logs.applies_to_stock` flag drives that behavior—run `ALTER TABLE purchase_logs ADD COLUMN applies_to_stock BOOLEAN NOT NULL DEFAULT TRUE;` if the table already exists before you redeploy the updated code.
+- **Email alerts**: the app now sends SMTP emails using `info@sportslinephotography.com` by default. If you need to override it, add `SMTP_FROM=alerts@domain.com` to your `.env`. The rest of the SMTP envs (`SMTP_HOST/PORT/USER/PASSWORD`) remain unchanged.
 - **Products**: the finished goods that customers order. Add each product (matching `cart_sku`/`product_code`) with a BOM that pulls from your raw materials. The sync process deducts raw materials by exploding the product recipe; legacy sync still falls back to raw SKU-based BOMs if a product entry is missing.
 
 Use the **Products** UI to keep your catalog, BOMs, and prices up to date so deductions align with actual production consumption.

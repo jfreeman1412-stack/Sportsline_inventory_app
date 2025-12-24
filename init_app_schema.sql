@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS purchase_logs (
     purchase_date DATE NOT NULL,
     quantity FLOAT NOT NULL,
     price DECIMAL(18,6) NOT NULL,
+    applies_to_stock BOOLEAN NOT NULL DEFAULT TRUE,
     supplier_name VARCHAR(255),
     supplier_url VARCHAR(512),
     supplier_code VARCHAR(255),

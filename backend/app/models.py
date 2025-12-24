@@ -73,6 +73,7 @@ class PurchaseLog(Base):
     purchase_date = Column(Date, nullable=False)
     quantity = Column(Float, nullable=False)
     price = Column(Float, nullable=False)
+    applies_to_stock = Column(Boolean, nullable=False, default=True)
     supplier_name = Column(String(255), nullable=True)
     supplier_url = Column(String(512), nullable=True)
     supplier_code = Column(String(255), nullable=True)

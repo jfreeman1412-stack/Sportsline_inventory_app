@@ -20,7 +20,7 @@ def _send_smtp(subject: str, body: str, recipients: list[str]) -> None:
         return
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = settings.smtp_user
+    msg["From"] = settings.smtp_from or settings.smtp_user
     msg["To"] = ", ".join(recipients)
     msg.set_content(body)
 

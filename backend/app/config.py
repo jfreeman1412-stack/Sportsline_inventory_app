@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     smtp_port: int = Field(..., env="SMTP_PORT")
     smtp_user: str = Field(..., env="SMTP_USER")
     smtp_password: str = Field(..., env="SMTP_PASSWORD")
+    smtp_from: str = Field("info@sportslinephotography.com", env="SMTP_FROM")
 
     twilio_sid: str | None = Field(None, env="TWILIO_SID")
     twilio_token: str | None = Field(None, env="TWILIO_TOKEN")
