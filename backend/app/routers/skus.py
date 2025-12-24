@@ -27,6 +27,19 @@ def _get_sku_or_404(db: Session, sku_id: int) -> SKU:
     return sku
 
 
+def _calculate_price_pct_changes(logs: list[PurchaseLog]) -> list[str | None]:
+    pct_changes: list[str | None] = []
+    prev_price: float | None = None
+    for log in logs:
+        if prev_price is None or prev_price == 0:
+            pct_changes.append(None)
+        else:
+            change = ((log.price - prev_price) / prev_price) * 100
+            pct_changes.append(f"{change:+.2f}%")
+        prev_price = log.price
+    return pct_changes
+
+
 @router.get("/")
 def list_skus(
     request: Request,
@@ -139,6 +152,7 @@ def sku_detail(
             "purchase_logs": purchase_logs,
             "price_chart_labels": [log.purchase_date.strftime("%Y-%m-%d") for log in sorted_logs],
             "price_chart_values": [log.price for log in sorted_logs],
+            "price_chart_pct": _calculate_price_pct_changes(sorted_logs),
             "available_children": db.scalars(select(SKU).where(SKU.sku_id != sku.sku_id)).all(),
             "now": datetime.utcnow(),
             "current_user": current_user,

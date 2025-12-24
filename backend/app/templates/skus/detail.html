@@ -137,6 +137,15 @@
             <a href="#purchase-form" class="btn btn-sm btn-outline-primary mt-2">Add Purchase</a>
           {% endif %}
           <canvas id="priceChart" class="mt-4" style="max-height:260px;"></canvas>
+          {% if price_chart_pct %}
+            <div class="d-flex flex-wrap gap-2 justify-content-between mt-2 small text-muted">
+              {% for pct in price_chart_pct %}
+                <div style="flex: 1 0 80px; text-align:center;">
+                  {{ pct or "&nbsp;" }}
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
         </div>
       </div>
       {% if can_manage %}
