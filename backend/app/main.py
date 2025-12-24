@@ -9,7 +9,7 @@ from .auth import get_current_user_optional
 from .config import settings
 from .database import get_db
 from .models import RoleEnum, SKU, SyncLog
-from .routers import addons, auth, logs, products, shipstation, shipping, skus, settings, sync
+from .routers import addons, auth, logs, products, shipstation, shipping, skus, sync, settings as settings_router
 
 app = FastAPI(title=settings.app_name)
 app.state.settings = settings
@@ -62,4 +62,4 @@ app.include_router(logs.router)
 app.include_router(auth.router)
 app.include_router(skus.router)
 app.include_router(products.router)
-app.include_router(settings.router)
+app.include_router(settings_router.router)
