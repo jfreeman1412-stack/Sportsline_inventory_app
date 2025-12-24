@@ -45,7 +45,7 @@ def settings_page(
 @router.get("/settings/system")
 def system_settings(
     request: Request,
-    current_user=Depends(ensure_manager_or_owner),
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     return RedirectResponse(url="/settings", status_code=302)
@@ -83,7 +83,7 @@ def update_system_settings(
 def create_tag(
     tag_name: str = Form(...),
     tag_color: str | None = Form(None),
-    current_user=Depends(ensure_manager_or_owner),
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     trimmed = tag_name.strip()
@@ -93,5 +93,17 @@ def create_tag(
     if not exists:
         tag = Tag(name=trimmed, color=tag_color.strip() if tag_color else None)
         db.add(tag)
+        db.commit()
+
+
+@router.post("/settings/tags/{tag_id}/delete")
+def delete_tag(
+    tag_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    tag = db.scalar(select(Tag).where(Tag.tag_id == tag_id))
+    if tag:
+        db.delete(tag)
         db.commit()
     return RedirectResponse(url="/settings", status_code=302)

@@ -136,14 +136,18 @@
     <div class="card shadow-sm mt-4">
       <div class="card-body">
         <h2 class="h5 mb-3">Tags</h2>
-        <div class="mb-3">
+        <div class="mb-3 d-flex flex-wrap gap-2">
           {% for tag in tags %}
-            <span
-              class="badge rounded-pill me-1"
-              style="background-color: {{ tag.color or '#6c757d' }}; color: #fff;"
-            >
-              {{ tag.name }}
-            </span>
+            <form method="post" action="/settings/tags/{{ tag.tag_id }}/delete" class="m-0">
+              <button
+                type="submit"
+                class="badge rounded-pill border-0 d-inline-flex align-items-center gap-1"
+                style="background-color: {{ tag.color or '#6c757d' }}; color: #fff;"
+              >
+                {{ tag.name }}
+                <span aria-hidden="true" style="font-size:0.75rem;">×</span>
+              </button>
+            </form>
           {% endfor %}
         </div>
         <form method="post" action="/settings/tags" class="row g-3">
