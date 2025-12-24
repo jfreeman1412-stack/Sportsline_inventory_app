@@ -10,23 +10,33 @@
 
   <div class="card shadow-sm">
     <div class="card-body p-0">
+      {% macro sortable_header(label, key) -%}
+        {% set active = sort_by == key %}
+        {% set next_dir = "desc" if active and sort_dir == "asc" else "asc" %}
+        <a href="?sort={{ key }}&dir={{ next_dir }}" class="text-decoration-none">
+          {{ label }}
+          {% if active %}
+            <span class="text-muted">{{ "▲" if sort_dir == "asc" else "▼" }}</span>
+          {% endif %}
+        </a>
+      {%- endmacro %}
       <table class="table table-hover mb-0">
         <thead class="table-light">
           <tr>
-            <th>SKU</th>
-            <th>Name</th>
-            <th>Unit</th>
-            <th>Vendor</th>
-            <th>Stock</th>
-            <th>Threshold</th>
+            <th>{{ sortable_header("Name", "name") }}</th>
+            <th>{{ sortable_header("SKU", "sku_code") }}</th>
+            <th>{{ sortable_header("Unit", "unit") }}</th>
+            <th>{{ sortable_header("Vendor", "vendor") }}</th>
+            <th>{{ sortable_header("Stock", "stock") }}</th>
+            <th>{{ sortable_header("Threshold", "threshold") }}</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           {% for sku in skus %}
             <tr>
-              <td>{{ sku.sku_code }}</td>
               <td>{{ sku.name }}</td>
+              <td>{{ sku.sku_code }}</td>
               <td>{{ sku.unit_of_measure }}</td>
               <td>
                 {% if sku.vendor_name %}{{ sku.vendor_name }}{% endif %}

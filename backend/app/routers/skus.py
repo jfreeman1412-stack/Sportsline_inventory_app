@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import asc, desc, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,11 +32,30 @@ def list_skus(
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    sort_by: str = "name",
+    sort_dir: str = "asc",
 ):
-    skus = db.scalars(select(SKU)).all()
+    column_map = {
+        "name": SKU.name,
+        "sku_code": SKU.sku_code,
+        "unit": SKU.unit_of_measure,
+        "vendor": SKU.vendor_name,
+        "stock": SKU.current_stock,
+        "threshold": SKU.alert_threshold_qty,
+    }
+    column = column_map.get(sort_by, SKU.name)
+    direction = "desc" if sort_dir.lower() == "desc" else "asc"
+    order = desc(column) if direction == "desc" else asc(column)
+    skus = db.scalars(select(SKU).order_by(order)).all()
     return templates.TemplateResponse(
         "skus/list.html",
-        {"request": request, "skus": skus, "current_user": current_user},
+        {
+            "request": request,
+            "skus": skus,
+            "current_user": current_user,
+            "sort_by": sort_by,
+            "sort_dir": direction,
+        },
     )
 
 
