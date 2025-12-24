@@ -138,9 +138,12 @@
           {% endif %}
           <canvas id="priceChart" class="mt-4" style="max-height:260px;"></canvas>
           {% if price_chart_pct %}
-            <div class="d-flex flex-wrap gap-2 justify-content-between mt-2 small text-muted">
+            <div
+              class="text-muted small mt-2"
+              style="display:grid;grid-template-columns:repeat({{ price_chart_pct|length }},minmax(0,1fr));gap:0.25rem;"
+            >
               {% for pct in price_chart_pct %}
-              <div style="flex: 1 0 80px; text-align:center;">
+                <div style="text-align:center;">
                   {{ pct or "" }}
                 </div>
               {% endfor %}
