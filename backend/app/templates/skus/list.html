@@ -16,7 +16,7 @@
         {% for tag in available_tags %}
           <a
             class="btn btn-sm btn-outline-secondary {% if selected_tag and selected_tag.tag_id == tag.tag_id %}active{% endif %}"
-            href="/skus?tag={{ tag.tag_id }}"
+            href="/skus?tag_id={{ tag.tag_id }}&sort={{ sort_by }}&dir={{ sort_dir }}"
           >
             {{ tag.name }}
           </a>
