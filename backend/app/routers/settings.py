@@ -3,14 +3,38 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..auth import ensure_manager_or_owner, get_current_user
 from ..database import get_db
+from ..models import RoleEnum, User
 from ..services.app_settings import get_app_settings
 
 router = APIRouter(tags=["settings"])
 templates = Jinja2Templates(directory="backend/app/templates")
+
+
+@router.get("/settings")
+def settings_page(
+    request: Request,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    setting = get_app_settings(db)
+    users = []
+    if current_user.role in (RoleEnum.manager, RoleEnum.owner):
+        users = db.scalars(select(User)).all()
+    return templates.TemplateResponse(
+        "settings/index.html",
+        {
+            "request": request,
+            "current_user": current_user,
+            "users": users,
+            "setting": setting,
+            "title": "Settings",
+        },
+    )
 
 
 @router.get("/settings/system")
@@ -19,11 +43,7 @@ def system_settings(
     current_user=Depends(ensure_manager_or_owner),
     db: Session = Depends(get_db),
 ):
-    settings = get_app_settings(db)
-    return templates.TemplateResponse(
-        "settings/system.html",
-        {"request": request, "current_user": current_user, "setting": settings, "title": "System Settings"},
-    )
+    return RedirectResponse(url="/settings", status_code=302)
 
 
 @router.post("/settings/system")

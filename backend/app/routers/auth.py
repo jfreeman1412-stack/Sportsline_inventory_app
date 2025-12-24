@@ -111,10 +111,7 @@ def account(
     request: Request,
     current_user: User = Depends(get_current_user),
 ):
-    return templates.TemplateResponse(
-        "auth/account.html",
-        {"request": request, "current_user": current_user, "title": "My Account"},
-    )
+    return RedirectResponse(url="/settings", status_code=302)
 
 
 @router.post("/account/alerts")
