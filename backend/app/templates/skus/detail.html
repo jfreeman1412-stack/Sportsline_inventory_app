@@ -150,7 +150,15 @@
             </div>
             <div class="col-md-6">
               <label class="form-label visually-hidden">Quantity</label>
-              <input type="number" step="0.01" name="quantity" class="form-control" placeholder="Quantity" required />
+              <input
+                type="number"
+                step="0.01"
+                name="quantity"
+                class="form-control"
+                placeholder="Quantity"
+                value="{{ last_purchase.quantity if last_purchase else '' }}"
+                required
+              />
             </div>
             <div class="col-md-6">
               <label class="form-label visually-hidden">Price</label>
@@ -164,13 +172,31 @@
             </div>
             <div class="col-md-6">
               <label class="form-label visually-hidden">Supplier</label>
-              <input type="text" name="supplier_name" class="form-control" placeholder="Supplier name" />
+              <input
+                type="text"
+                name="supplier_name"
+                class="form-control"
+                placeholder="Supplier name"
+                value="{{ last_purchase.supplier_name if last_purchase else '' }}"
+              />
             </div>
             <div class="col-12">
-              <input type="url" name="supplier_url" class="form-control" placeholder="Supplier URL" />
+              <input
+                type="url"
+                name="supplier_url"
+                class="form-control"
+                placeholder="Supplier URL"
+                value="{{ last_purchase.supplier_url if last_purchase else '' }}"
+              />
             </div>
             <div class="col-md-6">
-              <input type="text" name="supplier_code" class="form-control" placeholder="Supplier code" />
+              <input
+                type="text"
+                name="supplier_code"
+                class="form-control"
+                placeholder="Supplier code"
+                value="{{ last_purchase.supplier_code if last_purchase else '' }}"
+              />
             </div>
             <div class="col-md-6">
               <input type="text" name="notes" class="form-control" placeholder="Notes" />

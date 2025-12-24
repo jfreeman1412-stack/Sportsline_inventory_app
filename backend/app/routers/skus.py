@@ -129,6 +129,7 @@ def sku_detail(
         .all()
     )
     sorted_logs = list(reversed(purchase_logs))
+    last_purchase = purchase_logs[0] if purchase_logs else None
     return templates.TemplateResponse(
         "skus/detail.html",
         {
@@ -141,6 +142,7 @@ def sku_detail(
             "available_children": db.scalars(select(SKU).where(SKU.sku_id != sku.sku_id)).all(),
             "now": datetime.utcnow(),
             "current_user": current_user,
+            "last_purchase": last_purchase,
         },
     )
 
