@@ -140,8 +140,8 @@
           {% if price_chart_pct %}
             <div class="d-flex flex-wrap gap-2 justify-content-between mt-2 small text-muted">
               {% for pct in price_chart_pct %}
-                <div style="flex: 1 0 80px; text-align:center;">
-                  {{ pct or "&nbsp;" }}
+              <div style="flex: 1 0 80px; text-align:center;">
+                  {{ pct or "" }}
                 </div>
               {% endfor %}
             </div>
