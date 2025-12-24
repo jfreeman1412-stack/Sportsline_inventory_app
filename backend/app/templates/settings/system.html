@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="h4">System Settings</h1>
+      </div>
+      <form method="post" action="/settings/system" class="row g-4">
+        <div class="col-12">
+          <div class="form-check form-switch">
+            <input
+              class="form-check-input"
+              type="checkbox"
+              name="email_alerts_enabled"
+              id="emailAlerts"
+              value="1"
+              {% if setting.email_alerts_enabled %}checked{% endif %}
+            />
+            <label class="form-check-label" for="emailAlerts">Enable email alerts</label>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <h2 class="h6">SMTP Credentials</h2>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">SMTP Host</label>
+              <input type="text" name="smtp_host" class="form-control" value="{{ setting.smtp_host or '' }}" />
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Port</label>
+              <input type="number" name="smtp_port" class="form-control" value="{{ setting.smtp_port or 587 }}" step="1" />
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">From address</label>
+              <input type="email" name="smtp_from" class="form-control" value="{{ setting.smtp_from or '' }}" />
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">SMTP User</label>
+              <input type="text" name="smtp_user" class="form-control" value="{{ setting.smtp_user or '' }}" />
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">SMTP Password</label>
+              <input
+                type="password"
+                name="smtp_password"
+                class="form-control"
+                placeholder="Leave blank to keep current"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <h2 class="h6">Alert thresholds</h2>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">Price spike threshold (%)</label>
+              <input
+                type="number"
+                name="price_spike_pct"
+                class="form-control"
+                min="1"
+                step="0.1"
+                value="{{ setting.price_spike_pct or 10 }}"
+              />
+            </div>
+            <div class="col-6">
+              <label class="form-label">Low-stock call to action</label>
+              <input
+                type="text"
+                name="low_stock_cta"
+                class="form-control"
+                placeholder="e.g., Order more at https://supplier.example.com"
+                value="{{ setting.low_stock_cta or '' }}"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <button class="btn btn-primary">Save settings</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

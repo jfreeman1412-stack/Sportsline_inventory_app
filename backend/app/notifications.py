@@ -8,30 +8,39 @@ import httpx
 from sqlalchemy import select
 
 from .config import settings
-from .models import RoleEnum, SKU, User
+from .models import AppSetting, RoleEnum, SKU, User
+from .services.app_settings import get_app_settings
 
 logger = logging.getLogger(__name__)
 
 
-def _send_smtp(subject: str, body: str, recipients: list[str]) -> None:
+def _send_smtp(subject: str, body: str, recipients: list[str], smtp_config: AppSetting) -> None:
     recipients = [email for email in recipients if email]
     if not recipients:
         logger.debug("No recipients for %s", subject)
         return
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = settings.smtp_from or settings.smtp_user
+    host = smtp_config.smtp_host or settings.smtp_host
+    port = smtp_config.smtp_port or settings.smtp_port
+    user = smtp_config.smtp_user or settings.smtp_user
+    password = smtp_config.smtp_password or settings.smtp_password
+    msg["From"] = smtp_config.smtp_from or settings.smtp_from or user
     msg["To"] = ", ".join(recipients)
     msg.set_content(body)
 
-    if settings.smtp_port == 465:
-        server = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=10)
+    if not host:
+        logger.warning("SMTP host is not configured, skipping %s email", subject)
+        return
+    if port == 465:
+        server = smtplib.SMTP_SSL(host, port, timeout=10)
     else:
-        server = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10)
+        server = smtplib.SMTP(host, port, timeout=10)
     with server:
-        if settings.smtp_port != 465:
+        if port != 465:
             server.starttls()
-        server.login(settings.smtp_user, settings.smtp_password)
+        if user and password:
+            server.login(user, password)
         server.send_message(msg)
 
 
@@ -63,24 +72,35 @@ def _owner_recipient(db) -> str | None:
 def notify_stock_alert(db, sku: SKU) -> None:
     if not sku.alert_threshold_qty or sku.current_stock >= sku.alert_threshold_qty:
         return
+    setting = get_app_settings(db)
+    if not setting.email_alerts_enabled:
+        return
     recipients = _stock_recipients(db)
     if not recipients:
         return
     subject = f"[Inventory] Low stock alert: {sku.name}"
     body = f"SKU {sku.name} ({sku.sku_code}) is below threshold ({sku.current_stock} < {sku.alert_threshold_qty})."
-    _send_smtp(subject, body, recipients)
+    if setting.low_stock_cta:
+        body += f"\n\n{setting.low_stock_cta}"
+    _send_smtp(subject, body, recipients, setting)
 
 
 def notify_price_spike(db, sku: SKU, previous_price: float, new_price: float) -> None:
     owner_email = _owner_recipient(db)
     if not owner_email:
         return
+    setting = get_app_settings(db)
+    if not setting.email_alerts_enabled:
+        return
+    threshold_pct = setting.price_spike_pct or 10.0
+    if not previous_price or new_price <= previous_price * (1 + threshold_pct / 100):
+        return
     subject = f"[Inventory] Price spike detected for {sku.name}"
     body = (
-        f"New purchase price {new_price} exceeded 10% above previous price {previous_price} "
+        f"New purchase price {new_price} exceeded {threshold_pct}% above previous price {previous_price} "
         f"for SKU {sku.sku_code}. Please review supplier data."
     )
-    _send_smtp(subject, body, [owner_email])
+    _send_smtp(subject, body, [owner_email], setting)
 
 
 def notify_unmapped_shipping(
@@ -89,9 +109,12 @@ def notify_unmapped_shipping(
     recipients = _stock_recipients(db)
     if not recipients:
         return
+    setting = get_app_settings(db)
+    if not setting.email_alerts_enabled:
+        return
     subject = "[Inventory] Shipping mapping missing"
     body = (
         f"Order {order_id} (ShipStation ID {shipstation_order_id}) has dimensions {dimensions} "
         "with no matching shipping mapping. Please add it in the dashboard."
     )
-    _send_smtp(subject, body, recipients)
+    _send_smtp(subject, body, recipients, setting)

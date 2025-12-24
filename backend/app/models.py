@@ -167,6 +167,20 @@ class AuditLog(Base):
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    id = Column(Integer, primary_key=True)
+    email_alerts_enabled = Column(Boolean, nullable=False, default=True)
+    smtp_host = Column(String(255), nullable=True)
+    smtp_port = Column(Integer, nullable=True)
+    smtp_user = Column(String(255), nullable=True)
+    smtp_password = Column(String(512), nullable=True)
+    smtp_from = Column(String(255), nullable=True)
+    price_spike_pct = Column(Float, nullable=False, default=10.0)
+    low_stock_cta = Column(String(512), nullable=True)
+
+
 class AddOnMapping(Base):
     __tablename__ = "add_on_mappings"
 

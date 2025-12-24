@@ -9,6 +9,22 @@ CREATE TABLE IF NOT EXISTS users (
     receives_stock_alerts BOOL DEFAULT TRUE
 );
 
+CREATE TABLE IF NOT EXISTS app_settings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    email_alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    smtp_host VARCHAR(255),
+    smtp_port INT,
+    smtp_user VARCHAR(255),
+    smtp_password VARCHAR(512),
+    smtp_from VARCHAR(255),
+    price_spike_pct FLOAT NOT NULL DEFAULT 10.0,
+    low_stock_cta VARCHAR(512)
+);
+
+INSERT INTO app_settings (email_alerts_enabled, price_spike_pct)
+SELECT 1, 10.0 FROM (SELECT 1) AS tmp
+WHERE NOT EXISTS (SELECT 1 FROM app_settings);
+
 CREATE TABLE IF NOT EXISTS skus (
     sku_id INT AUTO_INCREMENT PRIMARY KEY,
     sku_code VARCHAR(255) UNIQUE NOT NULL,  -- Matches legacy pp_internal_name/cart_sku
