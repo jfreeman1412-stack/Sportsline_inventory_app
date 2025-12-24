@@ -88,12 +88,13 @@ def create_tag(
 ):
     trimmed = tag_name.strip()
     if not trimmed:
-        return RedirectResponse(url="/settings", status_code=302)
+        return RedirectResponse(url="/settings", status_code=303)
     exists = db.scalar(select(Tag).where(Tag.name == trimmed))
     if not exists:
         tag = Tag(name=trimmed, color=tag_color.strip() if tag_color else None)
         db.add(tag)
         db.commit()
+    return RedirectResponse(url="/settings", status_code=303)
 
 
 @router.post("/settings/tags/{tag_id}/delete")
