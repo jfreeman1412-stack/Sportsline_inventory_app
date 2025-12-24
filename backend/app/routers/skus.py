@@ -27,15 +27,20 @@ def _get_sku_or_404(db: Session, sku_id: int) -> SKU:
     return sku
 
 
-def _calculate_price_pct_changes(logs: list[PurchaseLog]) -> list[str | None]:
-    pct_changes: list[str | None] = []
+def _calculate_price_pct_changes(logs: list[PurchaseLog]) -> list[dict[str, str | int] | None]:
+    pct_changes: list[dict[str, str | int] | None] = []
     prev_price: float | None = None
     for log in logs:
         if prev_price is None or prev_price == 0:
             pct_changes.append(None)
         else:
             change = ((log.price - prev_price) / prev_price) * 100
-            pct_changes.append(f"{change:+.2f}%")
+            pct_changes.append(
+                {
+                    "label": f"{change:+.2f}%",
+                    "direction": 1 if change > 0 else -1 if change < 0 else 0,
+                }
+            )
         prev_price = log.price
     return pct_changes
 

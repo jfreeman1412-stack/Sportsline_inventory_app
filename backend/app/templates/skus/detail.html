@@ -144,7 +144,15 @@
             >
               {% for pct in price_chart_pct %}
                 <div style="text-align:center;">
-                  {{ pct or "" }}
+                  {% if pct %}
+                    {% if pct.direction > 0 %}
+                      <span class="text-danger">{{ pct.label }}</span>
+                    {% elif pct.direction < 0 %}
+                      <span class="text-success">{{ pct.label }}</span>
+                    {% else %}
+                      <span class="text-muted">{{ pct.label }}</span>
+                    {% endif %}
+                  {% endif %}
                 </div>
               {% endfor %}
             </div>
