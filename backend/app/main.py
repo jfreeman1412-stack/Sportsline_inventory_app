@@ -12,7 +12,6 @@ from .models import RoleEnum, SKU, SyncLog
 from .routers import (
     addons,
     auth,
-    dashboard,
     logs,
     products,
     shipstation,
@@ -21,6 +20,7 @@ from .routers import (
     sync,
     settings as settings_router,
 )
+from .routers.dashboard import router as dashboard_router
 
 app = FastAPI(title=settings.app_name)
 app.state.settings = settings
@@ -74,4 +74,5 @@ app.include_router(auth.router)
 app.include_router(skus.router)
 app.include_router(products.router)
 app.include_router(settings_router.router)
+app.include_router(dashboard_router)
 app.include_router(dashboard.router)
