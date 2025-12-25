@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row">
+    <div class="col-12">
+      <h2 class="mb-3">Inventory Dashboard (Skeleton)</h2>
+    </div>
+  </div>
+  <div class="row">
+    <div class="col-lg-3 mb-3">
+      <div hx-get="/dashboard/filters" hx-target="#dashboard-filters" hx-trigger="load">
+        <div id="dashboard-filters"></div>
+      </div>
+    </div>
+    <div class="col-lg-9">
+      <div hx-get="/dashboard/kpis" hx-target="#dashboard-kpis" hx-trigger="load">
+        <div id="dashboard-kpis"></div>
+      </div>
+      <div class="card shadow-sm mt-3">
+        <div class="card-body">
+          <canvas id="trendChart" height="200"></canvas>
+          <p class="text-muted small mt-2">Trend chart placeholder—real data coming soon.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
