@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..legacy_db import LegacySession
-from ..models import AuditLog, SKU, Tag
+from ..models import AuditLog, ForecastResult, ReorderAlert, SKU, Tag
 
 BASE_TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
 templates = Jinja2Templates(directory=str(BASE_TEMPLATES))
@@ -89,6 +90,9 @@ def dashboard_kpis(
         )
         or 0
     )
+    alerts_count = (
+        db.scalar(select(func.count()).where(ReorderAlert.active)) or 0
+    )
     sku_codes = [sku.sku_code for sku in skus if sku.sku_code]
     sku_map = {sku.sku_code: sku for sku in skus if sku.sku_code}
 
@@ -113,9 +117,41 @@ def dashboard_kpis(
         "low_stock_items": low_stock_items,
         "today_deductions": f"{today_deductions:,.2f}",
         "top_movers": movers,
+        "alerts_count": alerts_count,
     }
     context.update(_build_filter_context(db, tag_id, vendor, product_type))
     return templates.TemplateResponse("dashboard/_kpis.html", context)
+
+
+@router.get("/alerts")
+def dashboard_alerts(
+    request: Request,
+    db: Session = Depends(get_db),
+    tag_id: int | None = None,
+    vendor: str | None = None,
+    product_type: str | None = None,
+):
+    alerts_query = (
+        select(ReorderAlert)
+        .where(ReorderAlert.active)
+        .order_by(ReorderAlert.alert_level.desc(), ReorderAlert.generated_at.desc())
+        .options(selectinload(ReorderAlert.sku))
+        .limit(10)
+    )
+    active_alerts = db.scalars(alerts_query).all()
+    context = {
+        "request": request,
+        "alerts": [
+            {
+                "name": alert.sku.name if alert.sku else "Unknown",
+                "sku": alert.sku.sku_code if alert.sku else "Unknown",
+                "message": alert.message,
+                "level": alert.alert_level,
+            }
+            for alert in active_alerts
+        ],
+    }
+    return templates.TemplateResponse("dashboard/_alerts.html", context)
 
 
 @router.get("/filters")
@@ -143,6 +179,18 @@ def _month_ranges(months: int = 12) -> list[str]:
     return labels
 
 
+def _future_month_labels(last_label: str, months: int = 3) -> list[str]:
+    if not last_label:
+        return []
+    year, month = map(int, last_label.split("-"))
+    labels = []
+    for i in range(1, months + 1):
+        future_month = ((month - 1 + i) % 12) + 1
+        future_year = year + ((month - 1 + i) // 12)
+        labels.append(f"{future_year:04d}-{future_month:02d}")
+    return labels
+
+
 @router.get("/trend-data")
 def dashboard_trend_data(
     tag_id: int | None = None,
@@ -156,7 +204,7 @@ def dashboard_trend_data(
     if not sku_codes:
         return JSONResponse({"labels": labels, "datasets": []})
 
-    sku_to_tags = {sku.sku_code: [tag.name for tag in sku.tags] for sku in skus}
+    sku_to_tags = {sku.sku_id: [tag.name for tag in sku.tags] for sku in skus if sku.sku_id}
     tag_totals: dict[str, list[float]] = {"All": [0.0] * len(labels)}
 
     start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -222,4 +270,43 @@ def dashboard_trend_data(
             }
         )
 
-    return JSONResponse({"labels": labels, "datasets": datasets})
+    forecast_labels = _future_month_labels(labels[-1]) if labels else []
+    sku_map = {sku.sku_id: sku for sku in skus if sku.sku_id}
+    forecast_query = (
+        select(ForecastResult)
+        .where(ForecastResult.sku_id.in_(sku_map.keys()))
+        .order_by(ForecastResult.sku_id, ForecastResult.created_at.desc())
+    )
+    forecast_rows = db.execute(forecast_query).all()
+    latest_forecasts: dict[int, ForecastResult] = {}
+    for row in forecast_rows:
+        if row.sku_id not in latest_forecasts:
+            latest_forecasts[row.sku_id] = row
+    forecast_totals: dict[str, float] = defaultdict(float)
+    for sku_id, forecast in latest_forecasts.items():
+        tag_names = sku_to_tags.get(sku_id, ["All"])
+        for tag_name in tag_names:
+            forecast_totals[tag_name] += float(forecast.predicted_quantity or 0)
+    forecast_datasets = []
+    for idx, (tag, total) in enumerate(sorted(forecast_totals.items())):
+        if not forecast_labels:
+            break
+        monthly_value = total / len(forecast_labels)
+        forecast_datasets.append(
+            {
+                "label": f"{tag} Forecast",
+                "data": [monthly_value] * len(forecast_labels),
+                "borderColor": colors[idx % len(colors)],
+                "backgroundColor": "transparent",
+                "borderDash": [6, 6],
+                "pointRadius": 0,
+            }
+        )
+    return JSONResponse(
+        {
+            "labels": labels,
+            "datasets": datasets,
+            "forecast_labels": forecast_labels,
+            "forecast_datasets": forecast_datasets,
+        }
+    )

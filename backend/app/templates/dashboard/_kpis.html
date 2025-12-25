@@ -10,7 +10,12 @@
   <div class="col-sm-4 mb-3">
     <div class="card shadow-sm">
       <div class="card-body">
-        <h6>Low Stock</h6>
+        <h6>
+          Low Stock
+          {% if alerts_count %}
+            <span class="badge bg-danger ms-2">{{ alerts_count }} alerts</span>
+          {% endif %}
+        </h6>
         <p class="display-6">{{ low_stock_items }}</p>
       </div>
     </div>

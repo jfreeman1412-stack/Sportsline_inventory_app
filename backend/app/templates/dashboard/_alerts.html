@@ -1,0 +1,27 @@
+<div class="card shadow-sm mt-3">
+  <div class="card-body">
+    <h6 class="mb-3">Reorder Recommendations</h6>
+    {% if alerts %}
+      <div class="list-group">
+        {% for alert in alerts %}
+          <div
+            class="list-group-item d-flex justify-content-between align-items-start"
+          >
+            <div>
+              <span class="fw-bold">{{ alert.name }}</span>
+              <div class="small text-muted">{{ alert.sku }}</div>
+              <p class="mb-1">{{ alert.message }}</p>
+            </div>
+            <span
+              class="badge rounded-pill text-capitalize {% if alert.level == 'critical' %}bg-danger{% else %}bg-warning text-dark{% endif %}"
+            >
+              {{ alert.level }}
+            </span>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="text-muted small mb-0">No alerts at this time.</p>
+    {% endif %}
+  </div>
+</div>
