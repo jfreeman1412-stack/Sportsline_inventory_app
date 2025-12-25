@@ -37,6 +37,17 @@
           <option value="products" {% if selected_product_type == "products" %}selected{% endif %}>Products</option>
         </select>
       </div>
+      <div class="mb-3">
+        <label class="form-label">Raw Material</label>
+        <select name="raw_material" class="form-select form-select-sm">
+          <option value="">All raw materials</option>
+          {% for material in raw_materials %}
+            <option value="{{ material.sku_code }}" {% if selected_raw_material == material.sku_code %}selected{% endif %}>
+              {{ material.name }} ({{ material.sku_code }})
+            </option>
+          {% endfor %}
+        </select>
+      </div>
     </form>
   </div>
 </div>

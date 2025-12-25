@@ -1,9 +1,20 @@
 {% extends "base.html" %}
 
 {% block content %}
-  <div class="row">
-    <div class="col-12">
-      <h2 class="mb-3">Inventory Dashboard (Skeleton)</h2>
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h2 class="mb-1">Inventory Dashboard</h2>
+      <p class="text-muted small mb-0">
+        Track stock, upcoming production usage, and proactive reorder alerts.
+      </p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="/">Back to Home</a>
+      {% if app_debug %}
+        <button id="run-forecast-button" class="btn btn-sm btn-success">
+          Run Forecast Now
+        </button>
+      {% endif %}
     </div>
   </div>
   <div class="row">
@@ -22,12 +33,20 @@
       <div id="dashboard-trend-card" class="card shadow-sm mt-3" style="position: relative; min-height: 320px;">
         <div class="card-body">
           <canvas id="trendChart"></canvas>
+          <div
+            id="trend-placeholder"
+            class="alert alert-warning position-absolute top-50 start-50 translate-middle w-75 text-center d-none"
+          >
+            No historical data yet – run the forecast job to seed predictions.
+          </div>
         </div>
       </div>
     </div>
   </div>
   <script>
     const chartCtx = document.getElementById("trendChart")?.getContext("2d");
+    const trendPlaceholder = document.getElementById("trend-placeholder");
+    const runForecastButton = document.getElementById("run-forecast-button");
     let trendChart = null;
 
     function buildQueryParams() {
@@ -35,7 +54,14 @@
       if (!form) {
         return "";
       }
-      return new URLSearchParams(new FormData(form)).toString();
+      const data = new FormData(form);
+      const params = new URLSearchParams();
+      for (const [key, value] of data.entries()) {
+        if (value) {
+          params.append(key, value);
+        }
+      }
+      return params.toString();
     }
 
     async function refreshTrendData() {
@@ -70,10 +96,23 @@
       return `${label}: ${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
     }
 
+    function toggleChartPlaceholder(show) {
+      if (!trendPlaceholder) {
+        return;
+      }
+      trendPlaceholder.classList.toggle("d-none", !show);
+    }
+
     function updateChart(data) {
       if (!chartCtx) {
         return;
       }
+      const hasHistory =
+        data.datasets &&
+        data.datasets.some((dataset) =>
+          dataset.data.some((value) => Number(value) > 0)
+        );
+      toggleChartPlaceholder(!hasHistory);
       const forecastLabels = data.forecast_labels || [];
       const forecastDatasets = (data.forecast_datasets || []).map((dataset) => ({
         ...dataset,
@@ -128,6 +167,41 @@
       }
     }
 
+    async function runForecastNow() {
+      if (!runForecastButton) {
+        return;
+      }
+      runForecastButton.disabled = true;
+      runForecastButton.textContent = "Running...";
+      try {
+        const response = await fetch("/dashboard/admin/run-forecast-now", {
+          method: "POST",
+        });
+        if (!response.ok) {
+          throw new Error("Forecast failed");
+        }
+        await Promise.all([refreshTrendData(), refreshKPIs(), refreshAlerts()]);
+      } catch (error) {
+        console.error("Forecast error", error);
+      } finally {
+        runForecastButton.disabled = false;
+        runForecastButton.textContent = "Run Forecast Now";
+      }
+    }
+
+    async function refreshKPIs() {
+      const params = buildQueryParams();
+      const response = await fetch(`/dashboard/kpis?${params}`);
+      if (!response.ok) {
+        return;
+      }
+      const html = await response.text();
+      const target = document.getElementById("dashboard-kpis");
+      if (target) {
+        target.innerHTML = html;
+      }
+    }
+
     function attachFilterListeners() {
       const form = document.getElementById("dashboard-filter-form");
       if (!form) {
@@ -151,6 +225,9 @@
       attachFilterListeners();
       refreshTrendData();
       refreshAlerts();
+      if (runForecastButton) {
+        runForecastButton.addEventListener("click", runForecastNow);
+      }
     });
   </script>
 {% endblock %}

@@ -6,7 +6,7 @@ import logging
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
@@ -130,8 +130,8 @@ def _fetch_legacy_rows(legacy: LegacySession, start: datetime, end: datetime) ->
           AND l.update_date >= :start
           AND l.update_date <= :end
     """
-    result = legacy.execute(text(query), {"start": start, "end": end}).all()
-    return [dict(row) for row in result]
+    result = legacy.execute(text(query), {"start": start, "end": end})
+    return [dict(row) for row in result.mappings()]
 
 
 def run_nightly_forecast(
@@ -152,8 +152,16 @@ def run_nightly_forecast(
         start = datetime.utcnow() - timedelta(days=months_back * 30)
         end = datetime.utcnow()
         rows = _fetch_legacy_rows(legacy_session, start, end)
+        logger.info("Fetched %d legacy order rows (%s - %s)", len(rows), start, end)
         bom_map = _get_product_bom(db)
         usage_df = _aggregate_usage(rows, bom_map)
+        logger.info(
+            "Aggregated usage rows=%d skus=%d",
+            len(usage_df),
+            usage_df["sku_code"].nunique() if not usage_df.empty else 0,
+        )
+        if not usage_df.empty:
+            logger.debug("Usage sample: %s", usage_df.head(3).to_dict("records"))
         if usage_df.empty:
             logger.info("No historical usage data found – skipping forecast.")
             return
@@ -236,3 +244,7 @@ def run_nightly_forecast(
             db.close()
         if close_legacy:
             legacy_session.close()
+
+
+if __name__ == "__main__":
+    run_nightly_forecast()

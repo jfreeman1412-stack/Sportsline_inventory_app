@@ -5,18 +5,23 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+import logging
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, selectinload
 
+from ..auth import get_current_user, get_current_user_optional
+from ..config import settings
 from ..database import get_db
+from ..forecasting import run_nightly_forecast
 from ..legacy_db import LegacySession
-from ..models import AuditLog, ForecastResult, ReorderAlert, SKU, Tag
+from ..models import AuditLog, ForecastResult, ReorderAlert, SKU, Tag, User
 
 BASE_TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
 templates = Jinja2Templates(directory=str(BASE_TEMPLATES))
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -26,12 +31,15 @@ def _get_filtered_skus(
     tag_id: int | None = None,
     vendor: str | None = None,
     product_type: str | None = None,
+    raw_material: str | None = None,
 ) -> list[SKU]:
     query = select(SKU).options(selectinload(SKU.tags))
     if vendor:
         query = query.where(SKU.vendor_name == vendor)
     if tag_id:
         query = query.join(SKU.tags).where(Tag.tag_id == tag_id)
+    if raw_material:
+        query = query.where(SKU.sku_code == raw_material)
     skus = db.scalars(query).unique().all()
     return skus
 
@@ -41,26 +49,35 @@ def _build_filter_context(
     tag_id: int | None,
     vendor: str | None,
     product_type: str | None,
+    raw_material: str | None,
 ) -> dict[str, Any]:
     available_tags = db.scalars(select(Tag).order_by(Tag.name)).all()
     vendor_rows = db.scalars(
         select(func.distinct(SKU.vendor_name)).where(SKU.vendor_name.is_not(None)).order_by(SKU.vendor_name)
     ).all()
+    raw_materials = db.scalars(select(SKU).order_by(SKU.name)).all()
     return {
         "tags": available_tags,
         "vendors": [vendor for vendor in vendor_rows if vendor],
         "selected_tag_id": tag_id,
         "selected_vendor": vendor,
         "selected_product_type": product_type or "raw",
+        "raw_materials": raw_materials,
+        "selected_raw_material": raw_material,
     }
 
 
 @router.get("/")
-def dashboard_home(request: Request):
+def dashboard_home(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
+            "current_user": current_user,
+            "app_debug": settings.app_debug,
         },
     )
 
@@ -71,9 +88,11 @@ def dashboard_kpis(
     tag_id: int | None = None,
     vendor: str | None = None,
     product_type: str | None = None,
+    raw_material: str | None = None,
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
 ):
-    skus = _get_filtered_skus(db, tag_id, vendor, product_type)
+    skus = _get_filtered_skus(db, tag_id, vendor, product_type, raw_material)
     total_items = sum(float(sku.current_stock or 0) for sku in skus)
     low_stock_items = sum(
         1
@@ -118,8 +137,9 @@ def dashboard_kpis(
         "today_deductions": f"{today_deductions:,.2f}",
         "top_movers": movers,
         "alerts_count": alerts_count,
+        "current_user": current_user,
     }
-    context.update(_build_filter_context(db, tag_id, vendor, product_type))
+    context.update(_build_filter_context(db, tag_id, vendor, product_type, raw_material))
     return templates.TemplateResponse("dashboard/_kpis.html", context)
 
 
@@ -130,7 +150,11 @@ def dashboard_alerts(
     tag_id: int | None = None,
     vendor: str | None = None,
     product_type: str | None = None,
+    raw_material: str | None = None,
+    current_user: User | None = Depends(get_current_user_optional),
 ):
+    skus = _get_filtered_skus(db, tag_id, vendor, product_type, raw_material)
+    sku_ids = [sku.sku_id for sku in skus if sku.sku_id]
     alerts_query = (
         select(ReorderAlert)
         .where(ReorderAlert.active)
@@ -138,6 +162,8 @@ def dashboard_alerts(
         .options(selectinload(ReorderAlert.sku))
         .limit(10)
     )
+    if sku_ids:
+        alerts_query = alerts_query.where(ReorderAlert.sku_id.in_(sku_ids))
     active_alerts = db.scalars(alerts_query).all()
     context = {
         "request": request,
@@ -150,6 +176,7 @@ def dashboard_alerts(
             }
             for alert in active_alerts
         ],
+        "current_user": current_user,
     }
     return templates.TemplateResponse("dashboard/_alerts.html", context)
 
@@ -160,9 +187,10 @@ def dashboard_filters(
     tag_id: int | None = None,
     vendor: str | None = None,
     product_type: str | None = None,
+    raw_material: str | None = None,
     db: Session = Depends(get_db),
 ):
-    context = _build_filter_context(db, tag_id, vendor, product_type)
+    context = _build_filter_context(db, tag_id, vendor, product_type, raw_material)
     context["request"] = request
     return templates.TemplateResponse("dashboard/_filters.html", context)
 
@@ -191,26 +219,26 @@ def _future_month_labels(last_label: str, months: int = 3) -> list[str]:
     return labels
 
 
-@router.get("/trend-data")
-def dashboard_trend_data(
-    tag_id: int | None = None,
-    vendor: str | None = None,
-    product_type: str | None = None,
-    db: Session = Depends(get_db),
-):
-    skus = _get_filtered_skus(db, tag_id, vendor, product_type)
+TREND_COLORS = [
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#7f7f7f",
+    "#bcbd22",
+    "#17becf",
+]
+
+
+def _build_tag_totals(
+    skus: list[SKU], labels: list[str], start_date: datetime, end_date: datetime
+) -> tuple[dict[str, list[float]], list]:
     sku_codes = [sku.sku_code for sku in skus if sku.sku_code]
-    labels = _month_ranges(12)
     if not sku_codes:
-        return JSONResponse({"labels": labels, "datasets": []})
-
-    sku_to_tags = {sku.sku_id: [tag.name for tag in sku.tags] for sku in skus if sku.sku_id}
-    tag_totals: dict[str, list[float]] = {"All": [0.0] * len(labels)}
-
-    start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    start_date = start_date - timedelta(days=30 * (len(labels) - 1))
-    end_date = datetime.utcnow()
-
+        return {"All": [0.0] * len(labels)}, []
     placeholders = ", ".join([f":sku_{i}" for i in range(len(sku_codes))])
     query = f"""
         SELECT c.cart_sku AS sku,
@@ -225,68 +253,88 @@ def dashboard_trend_data(
         GROUP BY month_label, c.cart_sku
         ORDER BY month_label ASC;
     """
-    params = {
-        "start": start_date,
-        "end": end_date,
-    }
+    params = {"start": start_date, "end": end_date}
     params.update({f"sku_{i}": sku for i, sku in enumerate(sku_codes)})
     with LegacySession() as legacy:
-        result = legacy.execute(text(query), params).all()
-
+        rows = legacy.execute(text(query), params).all()
     label_index = {label: idx for idx, label in enumerate(labels)}
-    for row in result:
-        month = row.month_label
-        if month not in label_index:
+    sku_to_tags = {
+        sku.sku_code: [tag.name for tag in sku.tags] for sku in skus if sku.sku_code
+    }
+    tag_totals: dict[str, list[float]] = defaultdict(lambda: [0.0] * len(labels))
+    tag_totals["All"] = [0.0] * len(labels)
+    for row in rows:
+        month_label = row.month_label
+        if month_label not in label_index:
             continue
-        idx = label_index[month]
+        idx = label_index[month_label]
         qty = float(row.qty or 0)
         tag_totals["All"][idx] += qty
         for tag_name in sku_to_tags.get(row.sku, []):
-            tag_totals.setdefault(tag_name, [0.0] * len(labels))
             tag_totals[tag_name][idx] += qty
+    logger.info(
+        "Aggregated trend data rows=%d skus=%d total_usage=%.2f start=%s end=%s",
+        len(rows),
+        len(sku_codes),
+        sum(tag_totals["All"]),
+        start_date,
+        end_date,
+    )
+    return dict(tag_totals), rows
 
-    colors = [
-        "#1f77b4",
-        "#ff7f0e",
-        "#2ca02c",
-        "#d62728",
-        "#9467bd",
-        "#8c564b",
-        "#e377c2",
-        "#7f7f7f",
-        "#bcbd22",
-        "#17becf",
-    ]
-    datasets = []
-    for idx, (tag, data) in enumerate(sorted(tag_totals.items())):
-        datasets.append(
-            {
-                "label": tag,
-                "data": data,
-                "borderColor": colors[idx % len(colors)],
-                "backgroundColor": "transparent",
-                "fill": False,
-                "tension": 0.2,
-            }
-        )
 
-    forecast_labels = _future_month_labels(labels[-1]) if labels else []
+def _collect_forecast_totals(db: Session, skus: list[SKU]) -> dict[str, float]:
     sku_map = {sku.sku_id: sku for sku in skus if sku.sku_id}
+    if not sku_map:
+        return {}
     forecast_query = (
         select(ForecastResult)
         .where(ForecastResult.sku_id.in_(sku_map.keys()))
         .order_by(ForecastResult.sku_id, ForecastResult.created_at.desc())
     )
-    forecast_rows = db.execute(forecast_query).all()
+    forecast_rows = db.scalars(forecast_query).all()
     latest_forecasts: dict[int, ForecastResult] = {}
-    for row in forecast_rows:
-        if row.sku_id not in latest_forecasts:
-            latest_forecasts[row.sku_id] = row
+    for forecast in forecast_rows:
+        if forecast.sku_id not in latest_forecasts:
+            latest_forecasts[forecast.sku_id] = forecast
     forecast_totals: dict[str, float] = defaultdict(float)
     for sku_id, forecast in latest_forecasts.items():
-        tag_names = sku_to_tags.get(sku_id, ["All"])
+        if sku_id not in sku_map:
+            continue
+        tag_names = [tag.name for tag in sku_map[sku_id].tags] or ["All"]
         for tag_name in tag_names:
             forecast_totals[tag_name] += float(forecast.predicted_quantity or 0)
+    return dict(forecast_totals)
+
+
+@router.get("/trend-data")
+def dashboard_trend_data(
+    tag_id: int | None = None,
+    vendor: str | None = None,
+    product_type: str | None = None,
+    raw_material: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
+):
+    skus = _get_filtered_skus(db, tag_id, vendor, product_type, raw_material)
+    labels = _month_ranges(12)
+    start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    start_date = start_date - timedelta(days=30 * (len(labels) - 1))
+    end_date = datetime.utcnow()
+    tag_totals, rows = _build_tag_totals(skus, labels, start_date, end_date)
+    datasets = [
+        {
+            "label": tag,
+            "data": data,
+            "borderColor": TREND_COLORS[idx % len(TREND_COLORS)],
+            "backgroundColor": "transparent",
+            "fill": False,
+            "tension": 0.2,
+        }
+        for idx, (tag, data) in enumerate(sorted(tag_totals.items()))
+    ]
+    forecast_labels = _future_month_labels(labels[-1]) if labels else []
+    forecast_totals = _collect_forecast_totals(db, skus)
     forecast_datasets = []
     for idx, (tag, total) in enumerate(sorted(forecast_totals.items())):
         if not forecast_labels:
@@ -296,7 +344,7 @@ def dashboard_trend_data(
             {
                 "label": f"{tag} Forecast",
                 "data": [monthly_value] * len(forecast_labels),
-                "borderColor": colors[idx % len(colors)],
+                "borderColor": TREND_COLORS[idx % len(TREND_COLORS)],
                 "backgroundColor": "transparent",
                 "borderDash": [6, 6],
                 "pointRadius": 0,
@@ -310,3 +358,42 @@ def dashboard_trend_data(
             "forecast_datasets": forecast_datasets,
         }
     )
+
+
+@router.get("/admin/debug-trend-data")
+def debug_trend_data(
+    tag_id: int | None = None,
+    vendor: str | None = None,
+    product_type: str | None = None,
+    raw_material: str | None = None,
+    db: Session = Depends(get_db),
+):
+    if not settings.app_debug:
+        raise HTTPException(status_code=403, detail="Debug data not available")
+    skus = _get_filtered_skus(db, tag_id, vendor, product_type, raw_material)
+    labels = _month_ranges(12)
+    start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    start_date = start_date - timedelta(days=30 * (len(labels) - 1))
+    end_date = datetime.utcnow()
+    tag_totals, rows = _build_tag_totals(skus, labels, start_date, end_date)
+    forecast_totals = _collect_forecast_totals(db, skus)
+    payload = {
+        "labels": labels,
+        "history_rows": [
+            {"sku": row.sku, "month": row.month_label, "qty": float(row.qty or 0)}
+            for row in rows
+        ],
+        "tag_totals": tag_totals,
+        "forecast_totals": forecast_totals,
+    }
+    return JSONResponse(payload)
+
+
+@router.post("/admin/run-forecast-now")
+def run_forecast_now(
+    current_user: User = Depends(get_current_user),
+):
+    if not settings.app_debug:
+        raise HTTPException(status_code=403, detail="Manual forecasts disabled")
+    run_nightly_forecast()
+    return JSONResponse({"status": "forecast queued"})
