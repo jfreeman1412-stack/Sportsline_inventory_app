@@ -16,10 +16,9 @@
       <div hx-get="/dashboard/kpis" hx-target="#dashboard-kpis" hx-trigger="load">
         <div id="dashboard-kpis"></div>
       </div>
-      <div class="card shadow-sm mt-3">
+      <div id="dashboard-trend-card" class="card shadow-sm mt-3" style="position: relative; min-height: 320px;">
         <div class="card-body">
-          <canvas id="trendChart" height="200"></canvas>
-          <p class="text-muted small mt-2">Trend chart placeholder—real data coming soon.</p>
+          <canvas id="trendChart"></canvas>
         </div>
       </div>
     </div>
@@ -49,6 +48,12 @@
       updateChart(payload);
     }
 
+    function createTooltipLabel(context) {
+      const label = context.dataset.label || "";
+      const value = context.parsed.y ?? 0;
+      return `${label}: ${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+    }
+
     function updateChart(data) {
       if (!chartCtx) {
         return;
@@ -62,9 +67,31 @@
           },
           options: {
             responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+              mode: "index",
+              intersect: false,
+            },
+            plugins: {
+              legend: {
+                display: true,
+                position: "bottom",
+                labels: {
+                  padding: 12,
+                },
+              },
+              tooltip: {
+                callbacks: {
+                  label: createTooltipLabel,
+                },
+              },
+            },
             scales: {
               y: {
                 beginAtZero: true,
+                ticks: {
+                  callback: (value) => value.toLocaleString(),
+                },
               },
             },
           },

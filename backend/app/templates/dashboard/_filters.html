@@ -6,6 +6,7 @@
       hx-get="/dashboard/kpis"
       hx-target="#dashboard-kpis"
       hx-trigger="change delay:200ms"
+      hx-on="htmx:afterRequest: refreshTrendData()"
     >
       <div class="mb-3">
         <label class="form-label">Tag</label>
