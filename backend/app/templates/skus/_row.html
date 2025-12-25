@@ -1,0 +1,92 @@
+{# Partial for SKU table row with inline stock/reorder form #}
+{% set sort_by_val = sort_by if sort_by is defined else "name" %}
+{% set sort_dir_val = sort_dir if sort_dir is defined else "asc" %}
+{% set selected_tag_val = selected_tag if selected_tag is defined else None %}
+{% set tag_param = selected_tag_val.tag_id if selected_tag_val else None %}
+{% set list_query_base = "?sort_by=" ~ sort_by_val ~ "&sort_dir=" ~ sort_dir_val %}
+{% set list_query = list_query_base %}
+{% if tag_param %}
+  {% set list_query = list_query ~ "&tag_id=" ~ tag_param %}
+{% endif %}
+<tr id="sku-row-{{ sku.sku_id }}">
+  <td data-column="name">
+    <a href="/skus/{{ sku.sku_id }}{{ list_query }}" class="fw-bold text-decoration-none">
+    {{ sku.name }}
+    </a>
+  </td>
+  <td data-column="sku_code">{{ sku.sku_code }}</td>
+  <td data-column="unit">{{ sku.unit_of_measure }}</td>
+  <td data-column="vendor">
+    {% if sku.vendor_name %}{{ sku.vendor_name }}{% endif %}
+    {% if sku.vendor_url %}
+      <br />
+      <a href="{{ sku.vendor_url }}" target="_blank" rel="noreferrer">Vendor page</a>
+    {% endif %}
+  </td>
+  <td data-column="tags">
+    {% with addable_tags=available_optionals.get(sku.sku_id, []) %}
+      {% include "skus/_tags_column.html" %}
+    {% endwith %}
+  </td>
+  <td class="p-0" data-column="stock">
+    <form
+      hx-post="/skus/{{ sku.sku_id }}/quick-update"
+      hx-target="#sku-row-{{ sku.sku_id }}"
+      hx-swap="outerHTML"
+      class="d-flex flex-wrap gap-2 align-items-center p-2"
+      id="quick-update-{{ sku.sku_id }}"
+    >
+      <input type="hidden" name="sort_by" value="{{ sort_by_val }}" />
+      <input type="hidden" name="sort_dir" value="{{ sort_dir_val }}" />
+      {% if tag_param %}
+        <input type="hidden" name="tag_id" value="{{ tag_param }}" />
+      {% endif %}
+      <div class="form-floating flex-fill me-1" style="max-width: 160px;">
+        <input
+          class="form-control form-control-sm text-end"
+          type="number"
+          name="current_stock"
+          step="0.01"
+          value="{{ sku.current_stock }}"
+          id="stock-{{ sku.sku_id }}"
+          placeholder="Stock"
+          style="padding-right: 0.5rem;"
+        />
+        <label for="stock-{{ sku.sku_id }}">Stock</label>
+      </div>
+      <button class="btn btn-sm btn-outline-primary px-3">Save</button>
+    </form>
+  </td>
+  <td data-column="reorder">
+    <div class="form-floating" style="max-width: 160px;">
+      <input
+        form="quick-update-{{ sku.sku_id }}"
+        class="form-control form-control-sm"
+        type="number"
+        name="alert_threshold_qty"
+        step="0.01"
+        value="{{ sku.alert_threshold_qty or '' }}"
+        id="threshold-{{ sku.sku_id }}"
+        placeholder="Reorder amount"
+      />
+      <label for="threshold-{{ sku.sku_id }}">Reorder amount</label>
+    </div>
+  </td>
+  <td class="text-end" data-column="average">
+    {% set avg_usage_map = average_usage_map if average_usage_map is defined else {} %}
+    {% set avg = avg_usage_map.get(sku.sku_code) %}
+    {% if avg %}
+      {{ avg|round(2) }}
+    {% else %}
+      —
+    {% endif %}
+  </td>
+  <td data-column="actions">
+    {% if current_user and current_user.role.value in ["manager","owner"] %}
+      <a href="/skus/{{ sku.sku_id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
+      <form method="post" action="/skus/{{ sku.sku_id }}/delete" class="d-inline">
+        <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete SKU?');">Delete</button>
+      </form>
+    {% endif %}
+  </td>
+</tr>
