@@ -24,4 +24,78 @@
       </div>
     </div>
   </div>
+  <script>
+    const chartCtx = document.getElementById("trendChart")?.getContext("2d");
+    let trendChart = null;
+
+    function buildQueryParams() {
+      const form = document.getElementById("dashboard-filter-form");
+      if (!form) {
+        return "";
+      }
+      return new URLSearchParams(new FormData(form)).toString();
+    }
+
+    async function refreshTrendData() {
+      if (!chartCtx) {
+        return;
+      }
+      const params = buildQueryParams();
+      const response = await fetch(`/dashboard/trend-data?${params}`);
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      updateChart(payload);
+    }
+
+    function updateChart(data) {
+      if (!chartCtx) {
+        return;
+      }
+      if (!trendChart) {
+        trendChart = new Chart(chartCtx, {
+          type: "line",
+          data: {
+            labels: data.labels,
+            datasets: data.datasets,
+          },
+          options: {
+            responsive: true,
+            scales: {
+              y: {
+                beginAtZero: true,
+              },
+            },
+          },
+        });
+      } else {
+        trendChart.data.labels = data.labels;
+        trendChart.data.datasets = data.datasets;
+        trendChart.update();
+      }
+    }
+
+    function attachFilterListeners() {
+      const form = document.getElementById("dashboard-filter-form");
+      if (!form) {
+        return;
+      }
+      form.addEventListener("change", () => {
+        refreshTrendData();
+      });
+    }
+
+    document.addEventListener("htmx:afterSwap", (event) => {
+      if (event.detail.target.id === "dashboard-filters") {
+        attachFilterListeners();
+        refreshTrendData();
+      }
+    });
+
+    document.addEventListener("DOMContentLoaded", () => {
+      attachFilterListeners();
+      refreshTrendData();
+    });
+  </script>
 {% endblock %}

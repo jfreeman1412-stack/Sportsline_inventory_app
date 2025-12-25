@@ -24,3 +24,25 @@
     </div>
   </div>
 </div>
+{% if top_movers %}
+  <div class="row mt-2">
+    <div class="col-12">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h6 class="mb-3">Top Movers (last 7 days)</h6>
+          <ul class="list-group list-group-flush">
+            {% for mover in top_movers %}
+              <li class="list-group-item d-flex justify-content-between align-items-center">
+                <div>
+                  <strong>{{ mover.name }}</strong><br />
+                  <small class="text-muted">{{ mover.sku }}</small>
+                </div>
+                <span class="badge bg-primary rounded-pill">{{ mover.qty | round(2) }}</span>
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endif %}
