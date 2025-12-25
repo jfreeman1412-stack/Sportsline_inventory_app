@@ -179,6 +179,7 @@ class ForecastResult(Base):
     forecast_date = Column(Date, nullable=False)
     predicted_quantity = Column(Float, nullable=False)
     model_version = Column(String(64), nullable=True)
+    model_score = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     sku = relationship(
