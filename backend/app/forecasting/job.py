@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sqlalchemy import delete, select, text
+import traceback
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
@@ -149,12 +150,28 @@ def run_nightly_forecast(
         close_legacy = True
 
     try:
+        print("=== FORECAST JOB STARTED ===")
         start = datetime.utcnow() - timedelta(days=months_back * 30)
         end = datetime.utcnow()
+        print("Testing legacy DB connection...")
+        try:
+            legacy_session.execute(text("SELECT 1"))
+            print("Legacy DB connection OK")
+        except Exception as conn_exc:
+            print("Legacy DB connection FAILED:", conn_exc)
+        print("Fetching legacy orders...")
+        print("Forecast window:", start.date(), "-", end.date())
         rows = _fetch_legacy_rows(legacy_session, start, end)
-        logger.info("Fetched %d legacy order rows (%s - %s)", len(rows), start, end)
+        print(f"Legacy rows fetched: {len(rows)}")
+        if rows:
+            print("Sample legacy row:", rows[0])
+        else:
+            print("No legacy rows returned — check query/table/credentials")
+        logger.info("Starting forecast job for %s -> %s", start.date(), end.date())
         bom_map = _get_product_bom(db)
         usage_df = _aggregate_usage(rows, bom_map)
+        print(f"Aggregated usage DataFrame shape: {usage_df.shape}")
+        print("Sample usage:", usage_df.head().to_string() if not usage_df.empty else "Empty DataFrame")
         logger.info(
             "Aggregated usage rows=%d skus=%d",
             len(usage_df),
@@ -235,8 +252,10 @@ def run_nightly_forecast(
             )
             db.add(alert)
         db.commit()
-    except Exception:
+    except Exception as exc:
         db.rollback()
+        print("FORECAST JOB ERROR:", exc)
+        traceback.print_exc()
         logger.exception("Forecast job failed.")
         raise
     finally:

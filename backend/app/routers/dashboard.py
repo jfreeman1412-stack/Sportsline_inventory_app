@@ -255,7 +255,11 @@ def _build_tag_totals(
     params = {"start": start_date, "end": end_date}
     params.update({f"sku_{i}": sku for i, sku in enumerate(sku_codes)})
     with LegacySession() as legacy:
-        rows = legacy.execute(text(query), params).all()
+        exec_query = legacy.execute(text(query), params)
+        rows = exec_query.all()
+    logger.info(
+        "Trend query rows=%d sku_filter=%s", len(rows), sku_codes[:5] if len(sku_codes) <= 5 else sku_codes[:5]
+    )
     label_index = {label: idx for idx, label in enumerate(labels)}
     sku_to_tags = {
         sku.sku_code: [tag.name for tag in sku.tags] for sku in skus if sku.sku_code
