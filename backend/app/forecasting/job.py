@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import logging
+import traceback
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sqlalchemy import delete, select, text
-import traceback
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
@@ -120,7 +121,18 @@ def _aggregate_usage(rows: list[dict], bom_map: dict[str, list[tuple[str, float]
     return df
 
 
-def _fetch_legacy_rows(legacy: LegacySession, start: datetime, end: datetime) -> list[dict]:
+def _get_active_product_codes(session: Session) -> list[str]:
+    result = session.execute(select(Product.product_code).where(Product.is_active))
+    codes = [str(code) for code in result.scalars().all() if code]
+    print(
+        f"Active product_codes: {len(codes)} - sample: {codes[:5]}"
+    )
+    return codes
+
+
+def _fetch_legacy_rows(
+    legacy: LegacySession, start: datetime, end: datetime, product_codes: list[str] | None = None
+ ) -> list[dict]:
     query = """
         SELECT c.cart_sku AS cart_sku,
                c.cart_qty AS cart_qty,
@@ -130,8 +142,16 @@ def _fetch_legacy_rows(legacy: LegacySession, start: datetime, end: datetime) ->
         WHERE l.order_open_status IN (39, 40)
           AND l.update_date >= :start
           AND l.update_date <= :end
+          {product_filter}
     """
-    result = legacy.execute(text(query), {"start": start, "end": end})
+    filter_clause = ""
+    params: dict[str, Any] = {"start": start, "end": end}
+    if product_codes:
+        placeholders = ", ".join([f":code_{i}" for i in range(len(product_codes))])
+        filter_clause = f"AND c.cart_sku IN ({placeholders})"
+        for i, code in enumerate(product_codes):
+            params[f"code_{i}"] = code
+    result = legacy.execute(text(query.format(product_filter=filter_clause)), params)
     return [dict(row) for row in result.mappings()]
 
 
@@ -161,7 +181,12 @@ def run_nightly_forecast(
             print("Legacy DB connection FAILED:", conn_exc)
         print("Fetching legacy orders...")
         print("Forecast window:", start.date(), "-", end.date())
-        rows = _fetch_legacy_rows(legacy_session, start, end)
+        product_codes = _get_active_product_codes(db)
+        print("Active product codes sample:", product_codes[:10])
+        if not product_codes:
+            print("No active product codes defined—skipping forecast.")
+            return
+        rows = _fetch_legacy_rows(legacy_session, start, end, product_codes)
         print(f"Legacy rows fetched: {len(rows)}")
         if rows:
             print("Sample legacy row:", rows[0])

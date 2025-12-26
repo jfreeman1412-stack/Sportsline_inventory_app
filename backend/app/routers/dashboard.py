@@ -17,7 +17,7 @@ from ..config import settings
 from ..database import get_db
 from ..forecasting import run_nightly_forecast
 from ..legacy_db import LegacySession
-from ..models import AuditLog, ForecastResult, ReorderAlert, SKU, Tag, User
+from ..models import AuditLog, ForecastResult, Product, ProductRecipe, ReorderAlert, SKU, Tag, User
 
 BASE_TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
 templates = Jinja2Templates(directory=str(BASE_TEMPLATES))
@@ -44,6 +44,10 @@ def _get_filtered_skus(
     return skus
 
 
+def _get_active_product_codes(db: Session) -> list[str]:
+    return db.scalars(select(Product.product_code).where(Product.is_active)).unique().all()
+
+
 def _build_filter_context(
     db: Session,
     tag_id: int | None,
@@ -55,14 +59,24 @@ def _build_filter_context(
     vendor_rows = db.scalars(
         select(func.distinct(SKU.vendor_name)).where(SKU.vendor_name.is_not(None)).order_by(SKU.vendor_name)
     ).all()
-    raw_materials = db.scalars(select(SKU).order_by(SKU.name)).all()
+    child_ids = {
+        row.child_sku_id
+        for row in db.execute(
+            select(ProductRecipe.child_sku_id).join(Product, Product.product_id == ProductRecipe.parent_product_id).where(Product.is_active)
+        )
+    }
+    raw_materials = (
+        db.scalars(select(SKU).where(SKU.sku_id.in_(child_ids)).order_by(SKU.name)).all()
+        if child_ids
+        else []
+    )
     return {
         "tags": available_tags,
         "vendors": [vendor for vendor in vendor_rows if vendor],
         "selected_tag_id": tag_id,
         "selected_vendor": vendor,
         "selected_product_type": product_type or "raw",
-        "raw_materials": raw_materials,
+        "raw_materials": raw_materials if raw_materials else db.scalars(select(SKU).order_by(SKU.name)).all(),
         "selected_raw_material": raw_material,
     }
 
@@ -234,11 +248,17 @@ TREND_COLORS = [
 
 
 def _build_tag_totals(
-    skus: list[SKU], labels: list[str], start_date: datetime, end_date: datetime
+    skus: list[SKU],
+    product_codes: list[str],
+    labels: list[str],
+    start_date: datetime,
+    end_date: datetime,
 ) -> tuple[dict[str, list[float]], list]:
     sku_codes = [sku.sku_code for sku in skus if sku.sku_code]
-    placeholders = ", ".join([f":sku_{i}" for i in range(len(sku_codes))])
-    sku_filter = f"AND c.cart_sku IN ({placeholders})" if sku_codes else ""
+    if not product_codes:
+        return {"All": [0.0] * len(labels)}, []
+    placeholders = ", ".join([f":code_{i}" for i in range(len(product_codes))])
+    product_filter = f"AND c.cart_sku IN ({placeholders})"
     query = f"""
         SELECT c.cart_sku AS sku,
                DATE_FORMAT(l.update_date, '%%Y-%%m') AS month_label,
@@ -248,12 +268,12 @@ def _build_tag_totals(
         WHERE l.update_date >= :start
           AND l.update_date <= :end
           AND l.order_open_status IN (39, 40)
-          {sku_filter}
+          {product_filter}
         GROUP BY month_label, c.cart_sku
         ORDER BY month_label ASC;
     """
     params = {"start": start_date, "end": end_date}
-    params.update({f"sku_{i}": sku for i, sku in enumerate(sku_codes)})
+    params.update({f"code_{i}": code for i, code in enumerate(product_codes)})
     with LegacySession() as legacy:
         exec_query = legacy.execute(text(query), params)
         rows = exec_query.all()
@@ -320,11 +340,12 @@ def dashboard_trend_data(
     current_user: User | None = Depends(get_current_user_optional),
 ):
     skus = _get_filtered_skus(db, tag_id, vendor, product_type, raw_material)
+    product_codes = _get_active_product_codes(db)
     labels = _month_ranges(24)
     start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     start_date = start_date - timedelta(days=30 * (len(labels) - 1))
     end_date = datetime.utcnow()
-    tag_totals, rows = _build_tag_totals(skus, labels, start_date, end_date)
+    tag_totals, rows = _build_tag_totals(skus, product_codes, labels, start_date, end_date)
     datasets = [
         {
             "label": tag,
@@ -378,7 +399,8 @@ def debug_trend_data(
     start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     start_date = start_date - timedelta(days=30 * (len(labels) - 1))
     end_date = datetime.utcnow()
-    tag_totals, rows = _build_tag_totals(skus, labels, start_date, end_date)
+    product_codes = _get_active_product_codes(db)
+    tag_totals, rows = _build_tag_totals(skus, product_codes, labels, start_date, end_date)
     forecast_totals = _collect_forecast_totals(db, skus)
     payload = {
         "labels": labels,
