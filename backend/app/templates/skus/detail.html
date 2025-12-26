@@ -1,6 +1,21 @@
 {% extends "base.html" %}
 
 {% block content %}
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
+    <a href="{{ list_url }}" class="btn btn-sm btn-outline-secondary">Back to list</a>
+    <div class="btn-group" role="group">
+      {% if nav_prev_url %}
+        <a href="{{ nav_prev_url }}" class="btn btn-sm btn-outline-primary">← Previous</a>
+      {% else %}
+        <button class="btn btn-sm btn-outline-secondary" disabled>← Previous</button>
+      {% endif %}
+      {% if nav_next_url %}
+        <a href="{{ nav_next_url }}" class="btn btn-sm btn-outline-primary">Next →</a>
+      {% else %}
+        <button class="btn btn-sm btn-outline-secondary" disabled>Next →</button>
+      {% endif %}
+    </div>
+  </div>
   <div class="mb-4">
     <h2>{{ sku.name }} ({{ sku.sku_code }})</h2>
     <p class="text-muted mb-1">{{ sku.description or "No description yet." }}</p>
@@ -30,7 +45,7 @@
         <span class="badge bg-secondary">Unit: {{ sku.unit_of_measure }}</span>
         <span class="badge bg-success">Stock: {{ sku.current_stock }}</span>
         {% if sku.alert_threshold_qty %}
-          <span class="badge bg-warning text-dark">Threshold: {{ sku.alert_threshold_qty }}</span>
+          <span class="badge bg-warning text-dark">Reorder: {{ sku.alert_threshold_qty }}</span>
         {% endif %}
       </div>
       {% if sku.tags %}
@@ -43,6 +58,13 @@
               {{ tag.name }}
             </span>
           {% endfor %}
+        </div>
+      {% endif %}
+      {% if avg_daily_usage is not none %}
+        <div class="mt-2">
+          <span class="badge bg-info text-dark">
+            Avg daily usage ({{ average_window_days }}d): {{ avg_daily_usage|round(2) }}
+          </span>
         </div>
       {% endif %}
     </div>

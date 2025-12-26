@@ -317,7 +317,7 @@ def dashboard_trend_data(
     current_user: User | None = Depends(get_current_user_optional),
 ):
     skus = _get_filtered_skus(db, tag_id, vendor, product_type, raw_material)
-    labels = _month_ranges(12)
+    labels = _month_ranges(24)
     start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     start_date = start_date - timedelta(days=30 * (len(labels) - 1))
     end_date = datetime.utcnow()

@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     internal_sync_url: str = Field("http://inventory-app:8000/internal-sync", env="INTERNAL_SYNC_URL")
     poll_interval_seconds: int = Field(90, env="POLL_INTERVAL_SECONDS")
     session_secret: str = Field(..., env="SESSION_SECRET")
+    app_debug: bool = Field(False, env="APP_DEBUG")
 
     class Config:
         env_file = ".env"

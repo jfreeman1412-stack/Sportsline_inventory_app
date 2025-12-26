@@ -1,21 +1,27 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import logging
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import asc, desc, select
+from sqlalchemy import asc, desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from urllib.parse import urlencode
+
 from ..auth import ensure_manager_or_owner, get_current_user
 from ..database import get_db
-from ..models import PurchaseLog, SKU, SKURecipe, Tag, User
+from ..models import AuditLog, PurchaseLog, SKU, SKURecipe, Tag, User
 from ..notifications import notify_price_spike, notify_stock_alert
+from ..services.app_settings import get_app_settings
 
 BASE_TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/skus", tags=["skus"])
 templates = Jinja2Templates(directory=str(BASE_TEMPLATES))
 
@@ -29,6 +35,58 @@ def _get_sku_or_404(db: Session, sku_id: int) -> SKU:
 
 def _get_all_tags(db: Session) -> list[Tag]:
     return db.scalars(select(Tag).order_by(Tag.name)).all()
+
+
+def _build_order_clause(sort_by: str, sort_dir: str):
+    column_map = {
+        "name": SKU.name,
+        "sku_code": SKU.sku_code,
+        "unit": SKU.unit_of_measure,
+        "vendor": SKU.vendor_name,
+        "stock": SKU.current_stock,
+        "threshold": SKU.alert_threshold_qty,
+    }
+    column = column_map.get(sort_by, SKU.name)
+    direction = "desc" if sort_dir.lower() == "desc" else "asc"
+    order = desc(column) if direction == "desc" else asc(column)
+    return order, direction
+
+
+def _average_daily_usage(db: Session, sku_codes: list[str], window_days: int) -> dict[str, float]:
+    if not sku_codes:
+        return {}
+    window_days = max(window_days, 1)
+    interval_start = datetime.utcnow() - timedelta(days=window_days)
+    stmt = (
+        select(AuditLog.child_sku_code, func.sum(AuditLog.quantity))
+        .where(
+            AuditLog.child_sku_code.in_(sku_codes),
+            AuditLog.timestamp >= interval_start,
+        )
+        .group_by(AuditLog.child_sku_code)
+    )
+    rows = db.execute(stmt).all()
+    return {code: total / window_days for code, total in rows if total is not None}
+
+
+def _get_available_tags_for_sku(db: Session, sku: SKU, all_tags: list[Tag] | None = None) -> list[Tag]:
+    tags = all_tags if all_tags is not None else _get_all_tags(db)
+    assigned_ids = {tag.tag_id for tag in sku.tags}
+    return [tag for tag in tags if tag.tag_id not in assigned_ids]
+
+
+def _render_tags_column(
+    request: Request, sku: SKU, addable_tags: list[Tag], current_user: User | None = None
+):
+    return templates.TemplateResponse(
+        "skus/_tags_column.html",
+        {
+            "request": request,
+            "sku": sku,
+            "addable_tags": addable_tags,
+            "current_user": current_user,
+        },
+    )
 
 
 def _calculate_price_pct_changes(logs: list[PurchaseLog]) -> list[dict[str, str | int] | None]:
@@ -66,22 +124,19 @@ def list_skus(
     sort_by: str = "name",
     sort_dir: str = "asc",
 ):
-    column_map = {
-        "name": SKU.name,
-        "sku_code": SKU.sku_code,
-        "unit": SKU.unit_of_measure,
-        "vendor": SKU.vendor_name,
-        "stock": SKU.current_stock,
-        "threshold": SKU.alert_threshold_qty,
-    }
-    column = column_map.get(sort_by, SKU.name)
-    direction = "desc" if sort_dir.lower() == "desc" else "asc"
-    order = desc(column) if direction == "desc" else asc(column)
+    order, direction = _build_order_clause(sort_by, sort_dir)
     available_tags = _get_all_tags(db)
+    available_map = {}
     query = select(SKU)
     if tag_id:
         query = query.join(SKU.tags).where(Tag.tag_id == tag_id)
     skus = db.scalars(query.order_by(order)).all()
+    for sku in skus:
+        assigned_ids = {tag.tag_id for tag in sku.tags}
+        available_map[sku.sku_id] = [tag for tag in available_tags if tag.tag_id not in assigned_ids]
+    window_days = get_app_settings(db).deduction_window_days or 30
+    sku_codes = [sku.sku_code for sku in skus]
+    average_usage_map = _average_daily_usage(db, sku_codes, window_days)
     return templates.TemplateResponse(
         "skus/list.html",
         {
@@ -92,8 +147,104 @@ def list_skus(
             "sort_dir": direction,
             "available_tags": available_tags,
             "selected_tag": next((t for t in available_tags if t.tag_id == tag_id), None),
+            "available_optionals": available_map,
+            "average_usage_map": average_usage_map,
+            "average_window_days": window_days,
         },
     )
+
+
+@router.post("/{sku_id}/quick-update")
+def quick_update_sku_row(
+    request: Request,
+    sku_id: int,
+    current_stock: float = Form(...),
+    alert_threshold_qty: str | None = Form(None),
+    sort_by: str = Form("name"),
+    sort_dir: str = Form("asc"),
+    tag_id: int | None = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    sku = _get_sku_or_404(db, sku_id)
+    sku.current_stock = current_stock
+    sku.alert_threshold_qty = float(alert_threshold_qty) if alert_threshold_qty not in (None, "") else None
+    db.commit()
+    notify_stock_alert(db, sku)
+    all_tags = _get_all_tags(db)
+    addable = _get_available_tags_for_sku(db, sku, all_tags)
+    available_optionals = {sku.sku_id: addable}
+    selected_tag = db.scalar(select(Tag).where(Tag.tag_id == tag_id)) if tag_id else None
+    return templates.TemplateResponse(
+        "skus/_row.html",
+        {
+            "request": request,
+            "sku": sku,
+            "current_user": current_user,
+            "available_optionals": available_optionals,
+            "sort_by": sort_by,
+            "sort_dir": sort_dir,
+            "selected_tag": selected_tag,
+        },
+    )
+
+
+@router.get("/{sku_id}/tags/popover")
+def tags_popover(
+    request: Request,
+    sku_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    logger.info("tags_popover hit for sku %s", sku_id)
+    sku = _get_sku_or_404(db, sku_id)
+    addable = _get_available_tags_for_sku(db, sku)
+    return templates.TemplateResponse(
+        "skus/_tags_popover.html",
+        {"request": request, "sku": sku, "addable_tags": addable},
+    )
+
+
+@router.post("/{sku_id}/tags/{tag_id}/add")
+def add_tag_to_sku(
+    request: Request,
+    sku_id: int,
+    tag_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    sku = _get_sku_or_404(db, sku_id)
+    tag = db.scalar(select(Tag).where(Tag.tag_id == tag_id))
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    if tag not in sku.tags:
+        sku.tags.append(tag)
+        db.commit()
+        logger.info("tag %s added to sku %s by %s", tag.name, sku_id, current_user.email)
+    db.refresh(sku)
+    addable = _get_available_tags_for_sku(db, sku)
+    return _render_tags_column(request, sku, addable, current_user)
+
+
+@router.post("/{sku_id}/tags/{tag_id}/remove")
+def remove_tag_from_sku(
+    request: Request,
+    sku_id: int,
+    tag_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    sku = _get_sku_or_404(db, sku_id)
+    tag = db.scalar(select(Tag).where(Tag.tag_id == tag_id))
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    if tag in sku.tags:
+        sku.tags.remove(tag)
+        db.commit()
+        logger.info("tag %s removed from sku %s by %s", tag.name, sku_id, current_user.email)
+    db.refresh(sku)
+    addable = _get_available_tags_for_sku(db, sku)
+    return _render_tags_column(request, sku, addable, current_user)
 
 
 @router.get("/create")
@@ -162,8 +313,37 @@ def sku_detail(
     sku_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    sort_by: str = "name",
+    sort_dir: str = "asc",
+    tag_id: int | None = None,
 ):
     sku = _get_sku_or_404(db, sku_id)
+    order_clause, canonical_dir = _build_order_clause(sort_by, sort_dir)
+    query = select(SKU.sku_id)
+    if tag_id:
+        query = query.join(SKU.tags).where(Tag.tag_id == tag_id)
+    sorted_ids = db.scalars(query.order_by(order_clause)).all()
+    try:
+        idx = sorted_ids.index(sku.sku_id)
+    except ValueError:
+        idx = 0
+        sorted_ids.insert(idx, sku.sku_id)
+    prev_sku_id = sorted_ids[idx - 1] if idx > 0 else None
+    next_sku_id = sorted_ids[idx + 1] if idx < len(sorted_ids) - 1 else None
+    settings_model = get_app_settings(db)
+    window_days = settings_model.deduction_window_days or 30
+    avg_daily_usage = _average_daily_usage(db, [sku.sku_code], window_days).get(sku.sku_code)
+    params = dict(request.query_params)
+    params["sort_by"] = sort_by
+    params["sort_dir"] = canonical_dir
+    if tag_id:
+        params["tag_id"] = tag_id
+    else:
+        params.pop("tag_id", None)
+    query_fragment = f"?{urlencode(params)}" if params else ""
+    list_url = f"/skus{query_fragment}"
+    detail_prev_url = f"/skus/{prev_sku_id}{query_fragment}" if prev_sku_id else None
+    detail_next_url = f"/skus/{next_sku_id}{query_fragment}" if next_sku_id else None
     recipes = db.scalars(select(SKURecipe).where(SKURecipe.parent_sku_id == sku.sku_id)).all()
     purchase_logs = (
         db.scalars(
@@ -190,6 +370,11 @@ def sku_detail(
             "current_user": current_user,
             "last_purchase": last_purchase,
             "available_tags": _get_all_tags(db),
+            "nav_prev_url": detail_prev_url,
+            "nav_next_url": detail_next_url,
+            "list_url": list_url,
+            "avg_daily_usage": avg_daily_usage,
+            "average_window_days": window_days,
         },
     )
 

@@ -62,6 +62,7 @@ def update_system_settings(
     smtp_from: str | None = Form(None),
     price_spike_pct: float | None = Form(None),
     low_stock_cta: str | None = Form(None),
+    deduction_window_days: int | None = Form(None),
     current_user=Depends(ensure_manager_or_owner),
     db: Session = Depends(get_db),
 ):
@@ -75,6 +76,8 @@ def update_system_settings(
     settings_model.smtp_from = smtp_from.strip() if smtp_from else None
     settings_model.price_spike_pct = price_spike_pct if price_spike_pct is not None else settings_model.price_spike_pct
     settings_model.low_stock_cta = low_stock_cta.strip() if low_stock_cta else None
+    if deduction_window_days:
+        settings_model.deduction_window_days = max(1, deduction_window_days)
     db.commit()
     return RedirectResponse(url="/settings", status_code=302)
 

@@ -127,6 +127,16 @@
               value="{{ setting.low_stock_cta or '' }}"
             />
           </div>
+          <div class="col-md-4">
+            <label class="form-label">Usage window (days)</label>
+            <input
+              type="number"
+              min="1"
+              name="deduction_window_days"
+              class="form-control"
+              value="{{ setting.deduction_window_days or 30 }}"
+            />
+          </div>
           <div class="col-12">
             <button class="btn btn-sm btn-primary">Save system settings</button>
           </div>
