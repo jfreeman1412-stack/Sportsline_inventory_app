@@ -237,9 +237,8 @@ def _build_tag_totals(
     skus: list[SKU], labels: list[str], start_date: datetime, end_date: datetime
 ) -> tuple[dict[str, list[float]], list]:
     sku_codes = [sku.sku_code for sku in skus if sku.sku_code]
-    if not sku_codes:
-        return {"All": [0.0] * len(labels)}, []
     placeholders = ", ".join([f":sku_{i}" for i in range(len(sku_codes))])
+    sku_filter = f"AND c.cart_sku IN ({placeholders})" if sku_codes else ""
     query = f"""
         SELECT c.cart_sku AS sku,
                DATE_FORMAT(l.update_date, '%%Y-%%m') AS month_label,
@@ -249,7 +248,7 @@ def _build_tag_totals(
         WHERE l.update_date >= :start
           AND l.update_date <= :end
           AND l.order_open_status IN (39, 40)
-          AND c.cart_sku IN ({placeholders})
+          {sku_filter}
         GROUP BY month_label, c.cart_sku
         ORDER BY month_label ASC;
     """
