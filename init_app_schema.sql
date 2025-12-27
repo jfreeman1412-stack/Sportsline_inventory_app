@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS app_settings (
     smtp_password VARCHAR(512),
     smtp_from VARCHAR(255),
     price_spike_pct FLOAT NOT NULL DEFAULT 10.0,
-    low_stock_cta VARCHAR(512)
+    low_stock_cta VARCHAR(512),
+    deduction_window_days INT NOT NULL DEFAULT 30
 );
 
 CREATE TABLE IF NOT EXISTS tags (
@@ -123,4 +124,25 @@ CREATE TABLE IF NOT EXISTS add_on_mappings (
     sku_code VARCHAR(255) NOT NULL,
     quantity FLOAT NOT NULL DEFAULT 1.0,
     notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS forecast_results (
+    forecast_id INT AUTO_INCREMENT PRIMARY KEY,
+    sku_id INT NOT NULL,
+    forecast_date DATE NOT NULL,
+    predicted_quantity FLOAT NOT NULL,
+    model_version VARCHAR(64),
+    model_score FLOAT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (sku_id) REFERENCES skus(sku_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS reorder_alerts (
+    alert_id INT AUTO_INCREMENT PRIMARY KEY,
+    sku_id INT NOT NULL,
+    alert_level VARCHAR(32) NOT NULL,
+    message TEXT NOT NULL,
+    generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    FOREIGN KEY (sku_id) REFERENCES skus(sku_id) ON DELETE CASCADE
 );

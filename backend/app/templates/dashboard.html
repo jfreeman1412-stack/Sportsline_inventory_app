@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row">
+    <div class="col-12">
+      <h2 class="mb-3">Inventory Dashboard (Skeleton)</h2>
+    </div>
+  </div>
+  <div class="row">
+    <div class="col-lg-3 mb-3">
+      <div hx-get="/dashboard/filters" hx-target="#dashboard-filters" hx-trigger="load">
+        <div id="dashboard-filters"></div>
+      </div>
+      <div hx-get="/dashboard/alerts" hx-target="#dashboard-alerts" hx-trigger="load every 5m">
+        <div id="dashboard-alerts" class="mt-3"></div>
+      </div>
+    </div>
+    <div class="col-lg-9">
+      <div hx-get="/dashboard/kpis" hx-target="#dashboard-kpis" hx-trigger="load">
+        <div id="dashboard-kpis"></div>
+      </div>
+      <div id="dashboard-trend-card" class="card shadow-sm mt-3" style="position: relative; min-height: 320px;">
+        <div class="card-body">
+          <canvas id="trendChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const chartCtx = document.getElementById("trendChart")?.getContext("2d");
+    let trendChart = null;
+
+    function buildQueryParams() {
+      const form = document.getElementById("dashboard-filter-form");
+      if (!form) {
+        return "";
+      }
+      return new URLSearchParams(new FormData(form)).toString();
+    }
+
+    async function refreshTrendData() {
+      if (!chartCtx) {
+        return;
+      }
+      const params = buildQueryParams();
+      const response = await fetch(`/dashboard/trend-data?${params}`);
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      updateChart(payload);
+    }
+
+    async function refreshAlerts() {
+      const params = buildQueryParams();
+      const response = await fetch(`/dashboard/alerts?${params}`);
+      if (!response.ok) {
+        return;
+      }
+      const html = await response.text();
+      const target = document.getElementById("dashboard-alerts");
+      if (target) {
+        target.innerHTML = html;
+      }
+    }
+
+    function createTooltipLabel(context) {
+      const label = context.dataset.label || "";
+      const value = context.parsed.y ?? 0;
+      return `${label}: ${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+    }
+
+    function updateChart(data) {
+      if (!chartCtx) {
+        return;
+      }
+      const forecastLabels = data.forecast_labels || [];
+      const forecastDatasets = (data.forecast_datasets || []).map((dataset) => ({
+        ...dataset,
+        data: Array(data.labels.length).fill(null).concat(dataset.data || []),
+        borderDash: dataset.borderDash || [6, 6],
+        pointRadius: 0,
+      }));
+      const combinedLabels = data.labels.concat(forecastLabels);
+      const combinedDatasets = [...data.datasets, ...forecastDatasets];
+      if (!trendChart) {
+        trendChart = new Chart(chartCtx, {
+          type: "line",
+          data: {
+            labels: combinedLabels,
+            datasets: combinedDatasets,
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+              mode: "index",
+              intersect: false,
+            },
+            plugins: {
+              legend: {
+                display: true,
+                position: "bottom",
+                labels: {
+                  padding: 12,
+                },
+              },
+              tooltip: {
+                callbacks: {
+                  label: createTooltipLabel,
+                },
+              },
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  callback: (value) => value.toLocaleString(),
+                },
+              },
+            },
+          },
+        });
+      } else {
+        trendChart.data.labels = combinedLabels;
+        trendChart.data.datasets = combinedDatasets;
+        trendChart.update();
+      }
+    }
+
+    function attachFilterListeners() {
+      const form = document.getElementById("dashboard-filter-form");
+      if (!form) {
+        return;
+      }
+      form.addEventListener("change", () => {
+        refreshTrendData();
+        refreshAlerts();
+      });
+    }
+
+    document.addEventListener("htmx:afterSwap", (event) => {
+      if (event.detail.target.id === "dashboard-filters") {
+        attachFilterListeners();
+        refreshTrendData();
+        refreshAlerts();
+      }
+    });
+
+    document.addEventListener("DOMContentLoaded", () => {
+      attachFilterListeners();
+      refreshTrendData();
+      refreshAlerts();
+    });
+  </script>
+{% endblock %}

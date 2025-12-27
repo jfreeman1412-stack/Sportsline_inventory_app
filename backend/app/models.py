@@ -53,6 +53,8 @@ class SKU(Base):
         foreign_keys="ProductRecipe.child_sku_id",
     )
     tags = relationship("Tag", secondary="sku_tags", back_populates="skus")
+    forecast_results = relationship("ForecastResult", back_populates="sku")
+    reorder_alerts = relationship("ReorderAlert", back_populates="sku")
 
 
 class SKURecipe(Base):
@@ -169,6 +171,35 @@ class AuditLog(Base):
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class ForecastResult(Base):
+    __tablename__ = "forecast_results"
+
+    forecast_id = Column(Integer, primary_key=True)
+    sku_id = Column(Integer, ForeignKey("skus.sku_id"), nullable=False)
+    forecast_date = Column(Date, nullable=False)
+    predicted_quantity = Column(Float, nullable=False)
+    model_version = Column(String(64), nullable=True)
+    model_score = Column(Float, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    sku = relationship(
+        "SKU", back_populates="forecast_results", foreign_keys=[sku_id]
+    )
+
+
+class ReorderAlert(Base):
+    __tablename__ = "reorder_alerts"
+
+    alert_id = Column(Integer, primary_key=True)
+    sku_id = Column(Integer, ForeignKey("skus.sku_id"), nullable=False)
+    alert_level = Column(String(32), nullable=False)  # e.g., low/critical
+    message = Column(Text, nullable=False)
+    generated_at = Column(DateTime(timezone=True), server_default=func.now())
+    active = Column(Boolean, nullable=False, default=True)
+
+    sku = relationship("SKU", back_populates="reorder_alerts", foreign_keys=[sku_id])
+
+
 class AppSetting(Base):
     __tablename__ = "app_settings"
 
@@ -181,6 +212,7 @@ class AppSetting(Base):
     smtp_from = Column(String(255), nullable=True)
     price_spike_pct = Column(Float, nullable=False, default=10.0)
     low_stock_cta = Column(String(512), nullable=True)
+    deduction_window_days = Column(Integer, nullable=False, default=30)
 
 
 class Tag(Base):

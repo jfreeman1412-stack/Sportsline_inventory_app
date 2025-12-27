@@ -1,0 +1,42 @@
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h6>Filters</h6>
+    <form
+      id="dashboard-filter-form"
+      hx-get="/dashboard/kpis"
+      hx-target="#dashboard-kpis"
+      hx-trigger="change delay:200ms"
+      hx-on="htmx:afterRequest: refreshTrendData()"
+    >
+      <div class="mb-3">
+        <label class="form-label">Tag</label>
+        <select name="tag_id" class="form-select form-select-sm">
+          <option value="">All tags</option>
+          {% for tag in tags %}
+            <option value="{{ tag.tag_id }}" {% if selected_tag_id == tag.tag_id %}selected{% endif %}>
+              {{ tag.name }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Vendor</label>
+        <select name="vendor" class="form-select form-select-sm">
+          <option value="">All vendors</option>
+          {% for vendor_name in vendors %}
+            <option value="{{ vendor_name }}" {% if selected_vendor == vendor_name %}selected{% endif %}>
+              {{ vendor_name }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Product Type</label>
+        <select name="product_type" class="form-select form-select-sm">
+          <option value="raw" {% if selected_product_type == "raw" %}selected{% endif %}>Raw Materials</option>
+          <option value="products" {% if selected_product_type == "products" %}selected{% endif %}>Products</option>
+        </select>
+      </div>
+    </form>
+  </div>
+</div>
