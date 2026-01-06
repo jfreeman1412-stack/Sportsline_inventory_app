@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select, text
@@ -44,8 +44,30 @@ def _get_filtered_skus(
     return skus
 
 
+def _parse_optional_int(value: str | None) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _normalize_param(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    return value if value else None
+
+
 def _get_active_product_codes(db: Session) -> list[str]:
-    return db.scalars(select(Product.product_code).where(Product.is_active)).unique().all()
+    product_codes = [
+        str(code)
+        for code in db.scalars(select(Product.product_code).where(Product.is_active)).all()
+        if code
+    ]
+    logger.debug("Active product codes count=%d sample=%s", len(product_codes), product_codes[:5])
+    return product_codes
 
 
 def _build_filter_context(
@@ -55,6 +77,7 @@ def _build_filter_context(
     product_type: str | None,
     raw_material: str | None,
 ) -> dict[str, Any]:
+    raw_material = _normalize_param(raw_material)
     available_tags = db.scalars(select(Tag).order_by(Tag.name)).all()
     vendor_rows = db.scalars(
         select(func.distinct(SKU.vendor_name)).where(SKU.vendor_name.is_not(None)).order_by(SKU.vendor_name)
@@ -99,14 +122,16 @@ def dashboard_home(
 @router.get("/kpis")
 def dashboard_kpis(
     request: Request,
-    tag_id: int | None = None,
-    vendor: str | None = None,
-    product_type: str | None = None,
-    raw_material: str | None = None,
+    tag_id: str | None = Query(None),
+    vendor: str | None = Query(None),
+    product_type: str | None = Query(None),
+    raw_material: str | None = Query(None),
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
 ):
-    skus = _get_filtered_skus(db, tag_id, vendor, product_type, raw_material)
+    tag_id_val = _parse_optional_int(tag_id)
+    raw_material_val = _normalize_param(raw_material)
+    skus = _get_filtered_skus(db, tag_id_val, vendor, product_type, raw_material_val)
     total_items = sum(float(sku.current_stock or 0) for sku in skus)
     low_stock_items = sum(
         1
@@ -153,7 +178,7 @@ def dashboard_kpis(
         "alerts_count": alerts_count,
         "current_user": current_user,
     }
-    context.update(_build_filter_context(db, tag_id, vendor, product_type, raw_material))
+    context.update(_build_filter_context(db, tag_id_val, vendor, product_type, raw_material_val))
     return templates.TemplateResponse("dashboard/_kpis.html", context)
 
 
@@ -161,13 +186,15 @@ def dashboard_kpis(
 def dashboard_alerts(
     request: Request,
     db: Session = Depends(get_db),
-    tag_id: int | None = None,
-    vendor: str | None = None,
-    product_type: str | None = None,
-    raw_material: str | None = None,
+    tag_id: str | None = Query(None),
+    vendor: str | None = Query(None),
+    product_type: str | None = Query(None),
+    raw_material: str | None = Query(None),
     current_user: User | None = Depends(get_current_user_optional),
 ):
-    skus = _get_filtered_skus(db, tag_id, vendor, product_type, raw_material)
+    tag_id_val = _parse_optional_int(tag_id)
+    raw_material_val = _normalize_param(raw_material)
+    skus = _get_filtered_skus(db, tag_id_val, vendor, product_type, raw_material_val)
     sku_ids = [sku.sku_id for sku in skus if sku.sku_id]
     alerts_query = (
         select(ReorderAlert)
@@ -198,13 +225,15 @@ def dashboard_alerts(
 @router.get("/filters")
 def dashboard_filters(
     request: Request,
-    tag_id: int | None = None,
-    vendor: str | None = None,
-    product_type: str | None = None,
-    raw_material: str | None = None,
+    tag_id: str | None = Query(None),
+    vendor: str | None = Query(None),
+    product_type: str | None = Query(None),
+    raw_material: str | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    context = _build_filter_context(db, tag_id, vendor, product_type, raw_material)
+    tag_id_val = _parse_optional_int(tag_id)
+    raw_material_val = _normalize_param(raw_material)
+    context = _build_filter_context(db, tag_id_val, vendor, product_type, raw_material_val)
     context["request"] = request
     return templates.TemplateResponse("dashboard/_filters.html", context)
 
@@ -332,14 +361,16 @@ def _collect_forecast_totals(db: Session, skus: list[SKU]) -> dict[str, float]:
 
 @router.get("/trend-data")
 def dashboard_trend_data(
-    tag_id: int | None = None,
-    vendor: str | None = None,
-    product_type: str | None = None,
-    raw_material: str | None = None,
+    tag_id: str | None = Query(None),
+    vendor: str | None = Query(None),
+    product_type: str | None = Query(None),
+    raw_material: str | None = Query(None),
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
 ):
-    skus = _get_filtered_skus(db, tag_id, vendor, product_type, raw_material)
+    tag_id_val = _parse_optional_int(tag_id)
+    raw_material_val = _normalize_param(raw_material)
+    skus = _get_filtered_skus(db, tag_id_val, vendor, product_type, raw_material_val)
     product_codes = _get_active_product_codes(db)
     labels = _month_ranges(24)
     start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -386,15 +417,17 @@ def dashboard_trend_data(
 
 @router.get("/admin/debug-trend-data")
 def debug_trend_data(
-    tag_id: int | None = None,
-    vendor: str | None = None,
-    product_type: str | None = None,
-    raw_material: str | None = None,
+    tag_id: str | None = Query(None),
+    vendor: str | None = Query(None),
+    product_type: str | None = Query(None),
+    raw_material: str | None = Query(None),
     db: Session = Depends(get_db),
 ):
     if not settings.app_debug:
         raise HTTPException(status_code=403, detail="Debug data not available")
-    skus = _get_filtered_skus(db, tag_id, vendor, product_type, raw_material)
+    tag_id_val = _parse_optional_int(tag_id)
+    raw_material_val = _normalize_param(raw_material)
+    skus = _get_filtered_skus(db, tag_id_val, vendor, product_type, raw_material_val)
     labels = _month_ranges(12)
     start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     start_date = start_date - timedelta(days=30 * (len(labels) - 1))
