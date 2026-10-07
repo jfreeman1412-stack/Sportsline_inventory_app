@@ -13,6 +13,7 @@ from ..auth import ensure_manager_or_owner, get_current_user
 from ..database import get_db
 from ..models import Product, ProductRecipe, SKU, User
 from ..services.audit import record_change
+from ..services.export import csv_response
 
 BASE_TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
 router = APIRouter(prefix="/products", tags=["products"])
@@ -36,6 +37,28 @@ def list_products(
     return templates.TemplateResponse(
         "products/list.html",
         {"request": request, "products": products, "current_user": current_user},
+    )
+
+
+@router.get("/export")
+def export_products(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    products = db.scalars(select(Product).order_by(Product.product_code)).all()
+    return csv_response(
+        "products.csv",
+        ["product_code", "name", "price", "active", "bom"],
+        (
+            [
+                p.product_code,
+                p.name,
+                p.price,
+                "yes" if p.is_active else "no",
+                "; ".join(f"{r.child.sku_code} x {r.qty_used}" for r in p.recipes),
+            ]
+            for p in products
+        ),
     )
 
 

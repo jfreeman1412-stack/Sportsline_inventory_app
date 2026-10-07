@@ -17,6 +17,7 @@ from ..database import get_db
 from ..models import AuditLog, PurchaseLog, RoleEnum, SKU, SKURecipe, Tag, User
 from ..notifications import notify_price_spike, notify_stock_alert
 from ..services.audit import DEDUCTION_ACTIONS, describe_changes, record_change, snapshot
+from ..services.export import csv_response
 
 BASE_TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
 router = APIRouter(prefix="/skus", tags=["skus"])
@@ -209,6 +210,29 @@ def export_skus(
         buffer.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="raw-materials.csv"'},
+    )
+
+
+@router.get("/purchases/export")
+def export_purchases(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    logs = db.scalars(
+        select(PurchaseLog).order_by(PurchaseLog.purchase_date.desc(), PurchaseLog.id.desc())
+    ).all()
+    return csv_response(
+        "purchases.csv",
+        ["purchase_date", "sku_code", "sku_name", "quantity", "unit", "price", "total", "added_to_stock", "supplier_name", "supplier_code", "supplier_url", "notes"],
+        (
+            [
+                log.purchase_date, log.sku.sku_code, log.sku.name, log.quantity,
+                log.sku.unit_of_measure, log.price, round(log.quantity * log.price, 2),
+                "yes" if log.applies_to_stock else "no", log.supplier_name, log.supplier_code,
+                log.supplier_url, log.notes,
+            ]
+            for log in logs
+        ),
     )
 
 
