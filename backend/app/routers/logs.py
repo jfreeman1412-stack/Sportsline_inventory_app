@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -11,7 +12,9 @@ from sqlalchemy.orm import Session
 from ..auth import ensure_manager_or_owner
 from ..database import get_db
 from ..legacy_sync import get_order_employee
-from ..models import AuditLog, SyncLog
+from ..models import AuditLog, SyncLog, User
+from ..services.audit import DEDUCTION_ACTIONS
+from ..services.export import csv_response
 
 BASE_TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
 router = APIRouter(prefix="/logs", tags=["logs"])
@@ -119,5 +122,80 @@ def deduction_log(
             "deductions": deductions,
             "order_number": order_number,
             "current_user": current_user,
+        },
+    )
+
+
+@router.get("/deductions/export")
+def export_deductions(
+    days: int = Query(90, ge=1, le=3650),
+    db: Session = Depends(get_db),
+    current_user=Depends(ensure_manager_or_owner),
+):
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    logs = db.scalars(
+        select(AuditLog)
+        .where(AuditLog.action.in_(DEDUCTION_ACTIONS))
+        .where(AuditLog.timestamp >= cutoff)
+        .order_by(AuditLog.timestamp.desc(), AuditLog.id.desc())
+    ).all()
+    return csv_response(
+        f"deductions-last-{days}-days.csv",
+        ["timestamp", "order_id", "action", "sku_code", "sku_name", "quantity", "unit", "product_code", "product_name", "product_quantity"],
+        (
+            [
+                log.timestamp, log.order_id, log.action, log.child_sku_code, log.child_sku_name,
+                round(log.quantity or 0.0, 4), log.child_unit, log.product_code, log.product_name,
+                log.product_quantity,
+            ]
+            for log in logs
+        ),
+    )
+
+
+@router.get("/changes")
+def change_log(
+    request: Request,
+    q: str | None = Query(None),
+    format: str | None = Query(None),
+    db: Session = Depends(get_db),
+    current_user=Depends(ensure_manager_or_owner),
+):
+    query = select(AuditLog).where(AuditLog.action.not_in(DEDUCTION_ACTIONS))
+    if q:
+        like = f"%{q.strip()}%"
+        query = query.where(
+            AuditLog.child_sku_code.ilike(like)
+            | AuditLog.product_code.ilike(like)
+            | AuditLog.details.ilike(like)
+            | AuditLog.action.ilike(like)
+        )
+    entries = db.scalars(
+        query.order_by(AuditLog.timestamp.desc(), AuditLog.id.desc()).limit(
+            5000 if format == "csv" else 300
+        )
+    ).all()
+    user_emails = {user.user_id: user.email for user in db.scalars(select(User))}
+    if format == "csv":
+        return csv_response(
+            "change-history.csv",
+            ["timestamp", "user", "action", "sku_code", "product_code", "quantity", "details"],
+            (
+                [
+                    e.timestamp, user_emails.get(e.user_id, "System"), e.action,
+                    e.child_sku_code, e.product_code, e.quantity, e.details,
+                ]
+                for e in entries
+            ),
+        )
+    return templates.TemplateResponse(
+        "logs/changes.html",
+        {
+            "request": request,
+            "entries": entries,
+            "user_emails": user_emails,
+            "q": q or "",
+            "current_user": current_user,
+            "title": "Change History",
         },
     )

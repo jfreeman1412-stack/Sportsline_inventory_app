@@ -43,6 +43,18 @@ SHIPPING_DONE_ACTION = "shipping-awaiting-label"
 # (poller or Force Sync) processed it first.
 STATUS_DONE_ACTIONS = {40: PRINT_DONE_ACTION, 39: SHIPPING_DONE_ACTION}
 
+# Shipped orders whose ShipStation label/packages weren't available yet are retried on
+# every sync for this long, a few at a time to stay inside ShipStation's rate limit.
+SHIPPING_PENDING_ACTION = "shipping-label-pending"
+SHIPPING_WEBHOOK_HANDLED_ACTION = "shipping-webhook-handled"
+SHIPPING_RESOLVED_ACTIONS = (
+    "shipping-deducted",
+    "shipping-unmapped",
+    SHIPPING_WEBHOOK_HANDLED_ACTION,
+)
+SHIPPING_RETRY_DAYS = 3
+SHIPPING_RETRY_BATCH = 20
+
 
 def _record_sync(
     db: Session,
@@ -224,6 +236,44 @@ def _process_print_order(
     )
 
 
+def _try_shipping_deduction(db: Session, order_id: int, timestamp: datetime | None) -> bool:
+    """Look the order up in ShipStation and deduct its packages.
+
+    Returns True once the shipment is settled (deducted, logged as unmapped, or already
+    handled by the label webhook) and False when ShipStation has no packages for it yet.
+    """
+    ship_order = fetch_shipstation_order(order_id)
+    if not ship_order:
+        return False
+    shipstation_order_id = str(ship_order.get("orderId") or ship_order.get("orderKey") or order_id)
+    if shipstation_already_deducted(db, shipstation_order_id):
+        _record_sync(
+            db,
+            order_id,
+            SHIPPING_WEBHOOK_HANDLED_ACTION,
+            f"ShipStation {shipstation_order_id} already deducted by the label webhook",
+            timestamp=timestamp,
+        )
+        return True
+    packages = extract_package_data(ship_order)
+    if not packages:
+        return False
+    for index, pkg in enumerate(packages):
+        process_shipping_package(
+            db,
+            order_id,
+            shipstation_order_id,
+            pkg.get("length"),
+            pkg.get("width"),
+            pkg.get("height"),
+            pkg.get("package_code"),
+            pkg.get("dimension_string"),
+            timestamp=timestamp,
+            package_index=index,
+        )
+    return True
+
+
 def _process_shipping_wait(db: Session, order: OrderPayload) -> None:
     _record_sync(
         db,
@@ -232,26 +282,37 @@ def _process_shipping_wait(db: Session, order: OrderPayload) -> None:
         f"Status 39, waiting for ShipStation label. Items={len(order.line_items)}",
         timestamp=order.order_date,
     )
-    ship_order = fetch_shipstation_order(order.order_id)
-    if not ship_order:
-        return
-    shipstation_order_id = str(ship_order.get("orderId") or ship_order.get("orderKey") or order.order_id)
-    if shipstation_already_deducted(db, shipstation_order_id):
-        # The label webhook already deducted this shipment.
-        return
-    for index, pkg in enumerate(extract_package_data(ship_order)):
-        process_shipping_package(
+    if not _try_shipping_deduction(db, order.order_id, order.order_date):
+        _record_sync(
             db,
             order.order_id,
-            shipstation_order_id,
-            pkg.get("length"),
-            pkg.get("width"),
-            pkg.get("height"),
-            pkg.get("package_code"),
-            pkg.get("dimension_string"),
+            SHIPPING_PENDING_ACTION,
+            "ShipStation has no packages for this order yet; will retry",
             timestamp=order.order_date,
-            package_index=index,
         )
+
+
+def _retry_pending_shipments(db: Session) -> int:
+    """Retry shipped orders whose ShipStation packages weren't available earlier."""
+    cutoff = datetime.utcnow() - timedelta(days=SHIPPING_RETRY_DAYS)
+    resolved = select(SyncLog.internal_order_id).where(
+        SyncLog.action.in_(SHIPPING_RESOLVED_ACTIONS)
+    )
+    pending = db.execute(
+        select(SyncLog.internal_order_id, func.max(SyncLog.timestamp))
+        .where(SyncLog.action == SHIPPING_PENDING_ACTION)
+        .where(SyncLog.timestamp >= cutoff)
+        .where(SyncLog.internal_order_id.not_in(resolved))
+        .group_by(SyncLog.internal_order_id)
+        .order_by(func.max(SyncLog.timestamp).asc())
+        .limit(SHIPPING_RETRY_BATCH)
+    ).all()
+    settled = 0
+    for order_id, timestamp in pending:
+        if _try_shipping_deduction(db, order_id, timestamp):
+            settled += 1
+        db.flush()
+    return settled
 
 
 def _handle_orders(db: Session, orders: list[OrderPayload], action_label: str) -> int:
@@ -326,6 +387,7 @@ def internal_sync(
     try:
         with db.begin():
             processed = _handle_orders(db, payload.orders, action_label="poller-sync")
+            _retry_pending_shipments(db)
     except IntegrityError:
         db.rollback()
         logger.exception("Failed to commit sync batch")
@@ -346,16 +408,19 @@ def force_sync(
         return PlainTextResponse(
             "Force sync failed: could not reach the orders database.", status_code=502
         )
-    if not rows:
-        return PlainTextResponse("No new orders found")
-    orders = _build_orders_from_rows(rows, cart_options)
+    orders = _build_orders_from_rows(rows, cart_options) if rows else []
     processed = 0
     try:
         processed = _handle_orders(db, orders, action_label="force-sync")
+        shipped = _retry_pending_shipments(db)
         db.commit()
     except IntegrityError:
         db.rollback()
         logger.exception("Failed to commit manual sync")
         raise HTTPException(status_code=500, detail="Force sync failed")
+    if not orders and not shipped:
+        return PlainTextResponse("No new orders found")
     msg = f"Force sync complete, {processed} orders processed."
+    if shipped:
+        msg += f" {shipped} waiting shipments deducted."
     return PlainTextResponse(msg)

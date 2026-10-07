@@ -263,7 +263,9 @@ def extract_package_data(order: dict) -> list[dict]:
             width = _to_float(pkg.get("width") or dims.get("width"))
             height = _to_float(pkg.get("height") or dims.get("height"))
             package_code = pkg.get("packageCode") or pkg.get("code")
-            dimension_string = pkg.get("dimensions") or pkg.get("dimension") or None
+            dimension_string = pkg.get("dimensions") or pkg.get("dimension")
+            if not isinstance(dimension_string, str):
+                dimension_string = None
             packages.append(
                 {
                     "length": length,
@@ -271,6 +273,21 @@ def extract_package_data(order: dict) -> list[dict]:
                     "height": height,
                     "package_code": package_code,
                     "dimension_string": dimension_string,
+                }
+            )
+    if not packages:
+        # ShipStation's v1 /orders response carries one set of dimensions on the order
+        # itself rather than a shipments/packages list.
+        dims = order.get("dimensions") or {}
+        length, width, height = (_to_float(dims.get(k)) for k in ("length", "width", "height"))
+        if length and width and height:
+            packages.append(
+                {
+                    "length": length,
+                    "width": width,
+                    "height": height,
+                    "package_code": order.get("packageCode"),
+                    "dimension_string": None,
                 }
             )
     return packages

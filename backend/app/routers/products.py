@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from ..auth import ensure_manager_or_owner, get_current_user
 from ..database import get_db
 from ..models import Product, ProductRecipe, SKU, User
+from ..services.audit import record_change
+from ..services.export import csv_response
 
 BASE_TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
 router = APIRouter(prefix="/products", tags=["products"])
@@ -35,6 +37,28 @@ def list_products(
     return templates.TemplateResponse(
         "products/list.html",
         {"request": request, "products": products, "current_user": current_user},
+    )
+
+
+@router.get("/export")
+def export_products(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    products = db.scalars(select(Product).order_by(Product.product_code)).all()
+    return csv_response(
+        "products.csv",
+        ["product_code", "name", "price", "active", "bom"],
+        (
+            [
+                p.product_code,
+                p.name,
+                p.price,
+                "yes" if p.is_active else "no",
+                "; ".join(f"{r.child.sku_code} x {r.qty_used}" for r in p.recipes),
+            ]
+            for p in products
+        ),
     )
 
 
@@ -67,6 +91,10 @@ def create_product(
         is_active=bool(is_active),
     )
     db.add(product)
+    record_change(
+        db, current_user, "product-create", f"Created product {product.product_code}",
+        product_code=product.product_code, product_name=product.name,
+    )
     try:
         db.commit()
     except IntegrityError:
@@ -133,6 +161,10 @@ def edit_product(
     product.description = description
     product.price = float(price) if price not in (None, "") else None
     product.is_active = bool(is_active)
+    record_change(
+        db, current_user, "product-edit", f"Edited product {product.product_code}",
+        product_code=product.product_code, product_name=product.name,
+    )
     db.commit()
     return RedirectResponse(url=f"/products/{product.product_id}", status_code=303)
 
@@ -145,6 +177,10 @@ def delete_product(
     current_user: User = Depends(ensure_manager_or_owner),
 ):
     product = _get_product_or_404(db, product_id)
+    record_change(
+        db, current_user, "product-delete", f"Deleted product {product.product_code}",
+        product_code=product.product_code, product_name=product.name,
+    )
     db.delete(product)
     db.commit()
     return RedirectResponse(url="/products", status_code=303)
@@ -169,6 +205,11 @@ def add_product_bom(
         qty_used=qty_used,
     )
     db.add(recipe)
+    record_change(
+        db, current_user, "product-bom-add",
+        f"Added {qty_used} × {child.sku_code} to {product.product_code} BOM",
+        sku=child, product_code=product.product_code, product_name=product.name,
+    )
     db.commit()
     return RedirectResponse(url=f"/products/{product.product_id}", status_code=303)
 
@@ -182,7 +223,13 @@ def remove_product_bom(
     current_user: User = Depends(ensure_manager_or_owner),
 ):
     recipe = db.scalar(select(ProductRecipe).where(ProductRecipe.id == recipe_id))
-    if recipe:
+    if recipe and recipe.parent_product_id == product_id:
+        record_change(
+            db, current_user, "product-bom-remove",
+            f"Removed {recipe.child.sku_code} from {recipe.parent.product_code} BOM",
+            sku=recipe.child, product_code=recipe.parent.product_code,
+            product_name=recipe.parent.name,
+        )
         db.delete(recipe)
         db.commit()
     return RedirectResponse(url=f"/products/{product_id}", status_code=303)

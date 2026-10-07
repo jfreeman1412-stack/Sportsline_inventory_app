@@ -3,9 +3,12 @@
 {% block content %}
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h2>Website Orders (Products)</h2>
-    {% if current_user and current_user.role.value in ["manager","owner"] %}
-      <a href="/products/create" class="btn btn-primary btn-sm">Add Product</a>
-    {% endif %}
+    <div class="d-flex gap-2">
+      <a href="/products/export" class="btn btn-outline-secondary btn-sm">Export CSV</a>
+      {% if current_user and current_user.role.value in ["manager","owner"] %}
+        <a href="/products/create" class="btn btn-primary btn-sm">Add Product</a>
+      {% endif %}
+    </div>
   </div>
 
   <div class="card shadow-sm">

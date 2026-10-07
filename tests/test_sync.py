@@ -138,3 +138,27 @@ def test_group_orders_splits_status_and_dedupes_lines():
     grouped = group_orders(rows, {})
     assert sorted(g["order_open_status"] for g in grouped) == [39, 40]
     assert all(len(g["line_items"]) == 1 for g in grouped)
+
+
+def test_shipping_retries_until_shipstation_has_packages(session, monkeypatch):
+    import json
+
+    from backend.app.models import ShippingMapping
+
+    mailer = SKU(name="Mailer", sku_code="MAILER", current_stock=10.0, waste_pct=0.0)
+    session.add_all([mailer, ShippingMapping(length=12, width=9, height=1, items_json=json.dumps(["MAILER"]))])
+    session.commit()
+    monkeypatch.setattr("backend.app.routers.shipstation.notify_stock_alert", lambda *a, **k: None)
+
+    responses = {"order": None}
+    monkeypatch.setattr(sync, "fetch_shipstation_order", lambda order_id: responses["order"])
+    sync._handle_orders(session, [_order(20, 39)], action_label="poller-sync")
+    assert mailer.current_stock == 10.0
+    assert session.scalar(select(SyncLog).where(SyncLog.action == "shipping-label-pending"))
+
+    # Label shows up later (v1 order-level dimensions); the next sync deducts it once.
+    responses["order"] = {"orderId": 555, "dimensions": {"length": 12, "width": 9, "height": 1}}
+    assert sync._retry_pending_shipments(session) == 1
+    assert mailer.current_stock == 9.0
+    assert sync._retry_pending_shipments(session) == 0
+    assert mailer.current_stock == 9.0

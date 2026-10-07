@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% macro num(value, places=2) -%}
+  {%- if value is none -%}—{%- else -%}{{ "{:,.{}f}".format(value, places) }}{%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <h1 class="h3 mb-1">Analytics</h1>
+    <p class="text-muted mb-0">Usage, waste and supplier spend over the last {{ days }} days.</p>
+  </div>
+  <div class="d-flex gap-2">
+    <div class="btn-group" role="group" aria-label="Time window">
+      {% for choice in window_choices %}
+        <a class="btn btn-sm btn-outline-primary {% if choice == days %}active{% endif %}" href="?days={{ choice }}">{{ choice }} days</a>
+      {% endfor %}
+    </div>
+    <a class="btn btn-sm btn-outline-secondary" href="?days={{ days }}&format=csv">Export usage CSV</a>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <h2 class="h5">Reorder soon</h2>
+        <p class="text-muted small">Raw materials that run out within {{ reorder_soon_days }} days at the current rate of use.</p>
+        {% if reorder_soon %}
+          <table class="table table-sm mb-0">
+            <thead><tr><th>Raw material</th><th class="text-end">In stock</th><th class="text-end">Use/day</th><th class="text-end">Days left</th></tr></thead>
+            <tbody>
+              {% for row in reorder_soon %}
+                <tr>
+                  <td><a href="/skus/{{ row.sku.sku_id }}">{{ row.sku.name }}</a></td>
+                  <td class="text-end">{{ num(row.sku.current_stock) }} {{ row.sku.unit_of_measure }}</td>
+                  <td class="text-end">{{ num(row.per_day) }}</td>
+                  <td class="text-end fw-bold text-danger">{{ num(row.days_left, 1) }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="mb-0">Nothing is on track to run out in the next {{ reorder_soon_days }} days.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <h2 class="h5">Supplier spend</h2>
+        <p class="text-muted small">Purchases logged in the window: <strong>${{ num(total_spend) }}</strong> total.</p>
+        {% if months %}
+          <canvas id="spendChart" height="140" aria-label="Spend by month"></canvas>
+        {% endif %}
+        {% if suppliers %}
+          <table class="table table-sm mt-3 mb-0">
+            <thead><tr><th>Supplier</th><th class="text-end">Spend</th></tr></thead>
+            <tbody>
+              {% for supplier, amount in suppliers %}
+                <tr><td>{{ supplier }}</td><td class="text-end">${{ num(amount) }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="mb-0">No purchases logged in this window.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h2 class="h5">Usage and waste by raw material</h2>
+        <p class="text-muted small">Used is everything deducted by orders. Est. waste is the part of that added by each raw material's waste %.</p>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Raw material</th><th>Unit</th>
+                <th class="text-end">In stock</th><th class="text-end">Used</th>
+                <th class="text-end">Use/day</th><th class="text-end">Est. waste</th>
+                <th class="text-end">Days left</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in usage %}
+                <tr>
+                  <td><a href="/skus/{{ row.sku.sku_id }}">{{ row.sku.name }}</a> <small class="text-muted">{{ row.sku.sku_code }}</small></td>
+                  <td>{{ row.sku.unit_of_measure }}</td>
+                  <td class="text-end">{{ num(row.sku.current_stock) }}</td>
+                  <td class="text-end">{{ num(row.used) }}</td>
+                  <td class="text-end">{{ num(row.per_day) }}</td>
+                  <td class="text-end">{{ num(row.waste) if row.waste else "—" }}</td>
+                  <td class="text-end {% if row.reorder_soon %}text-danger fw-bold{% endif %}">{{ num(row.days_left, 1) }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h2 class="h5">Latest price changes</h2>
+        {% if price_changes %}
+          <table class="table table-sm mb-0">
+            <thead><tr><th>Raw material</th><th>Last bought</th><th class="text-end">Previous price</th><th class="text-end">Latest price</th><th class="text-end">Change</th></tr></thead>
+            <tbody>
+              {% for change in price_changes %}
+                <tr>
+                  <td><a href="/skus/{{ change.sku.sku_id }}">{{ change.sku.name }}</a></td>
+                  <td>{{ change.date.strftime("%Y-%m-%d") }}</td>
+                  <td class="text-end">${{ num(change.previous) }}</td>
+                  <td class="text-end">${{ num(change.latest) }}</td>
+                  <td class="text-end {% if change.pct > 0 %}text-danger{% elif change.pct < 0 %}text-success{% endif %}">{{ "{:+.1f}".format(change.pct) }}%</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="mb-0">Price changes show up once a raw material has two or more purchases logged.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if months %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.0/dist/chart.umd.min.js"></script>
+  <script>
+    new Chart(document.getElementById("spendChart"), {
+      type: "bar",
+      data: {
+        labels: {{ months|map(attribute=0)|list|tojson }},
+        datasets: [{ label: "Spend", data: {{ months|map(attribute=1)|list|tojson }}, backgroundColor: "#0d6efd" }],
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { callback: (v) => "$" + v } } },
+      },
+    });
+  </script>
+{% endif %}
+{% endblock %}

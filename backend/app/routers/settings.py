@@ -24,6 +24,7 @@ def _get_all_tags(db: Session) -> list[Tag]:
 @router.get("/settings")
 def settings_page(
     request: Request,
+    msg: str | None = None,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -38,6 +39,7 @@ def settings_page(
             "current_user": current_user,
             "users": users,
             "setting": setting,
+            "msg": msg,
         "tags": _get_all_tags(db),
         "title": "Settings",
         },
