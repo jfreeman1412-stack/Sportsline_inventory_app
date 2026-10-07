@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     internal_sync_url: str = Field("http://inventory-app:8000/internal-sync", env="INTERNAL_SYNC_URL")
     poll_interval_seconds: int = Field(90, env="POLL_INTERVAL_SECONDS")
     session_secret: str = Field(..., env="SESSION_SECRET")
+    # Set to true when the app is served over HTTPS so the login cookie is never sent
+    # over plain HTTP.
+    cookie_secure: bool = Field(False, env="COOKIE_SECURE")
 
     class Config:
         env_file = ".env"

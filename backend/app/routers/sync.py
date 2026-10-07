@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta
+import hmac
 import logging
 
 import pymysql
@@ -381,7 +382,7 @@ def internal_sync(
     x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
     db: Session = Depends(get_db),
 ):
-    if x_internal_token != settings.internal_sync_token:
+    if not hmac.compare_digest(x_internal_token or "", settings.internal_sync_token):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     processed = 0
     try:
