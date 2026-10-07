@@ -32,16 +32,20 @@ def _send_smtp(subject: str, body: str, recipients: list[str], smtp_config: AppS
     if not host:
         logger.warning("SMTP host is not configured, skipping %s email", subject)
         return
-    if port == 465:
-        server = smtplib.SMTP_SSL(host, port, timeout=10)
-    else:
-        server = smtplib.SMTP(host, port, timeout=10)
-    with server:
-        if port != 465:
-            server.starttls()
-        if user and password:
-            server.login(user, password)
-        server.send_message(msg)
+    # A mail outage must never break a sync or a form save, so failures are only logged.
+    try:
+        if port == 465:
+            server = smtplib.SMTP_SSL(host, port, timeout=10)
+        else:
+            server = smtplib.SMTP(host, port, timeout=10)
+        with server:
+            if port != 465:
+                server.starttls()
+            if user and password:
+                server.login(user, password)
+            server.send_message(msg)
+    except (smtplib.SMTPException, OSError):
+        logger.exception("Failed to send %s email", subject)
 
 
 def _send_twilio(to_number: str, body: str) -> None:
@@ -53,8 +57,11 @@ def _send_twilio(to_number: str, body: str) -> None:
         "To": to_number,
         "Body": body,
     }
-    with httpx.Client(timeout=10.0, auth=(settings.twilio_sid, settings.twilio_token)) as client:
-        client.post(url, data=data)
+    try:
+        with httpx.Client(timeout=10.0, auth=(settings.twilio_sid, settings.twilio_token)) as client:
+            client.post(url, data=data)
+    except httpx.HTTPError:
+        logger.exception("Failed to send SMS to %s", to_number)
 
 
 def _stock_recipients(db) -> list[str]:
@@ -69,8 +76,15 @@ def _owner_recipient(db) -> str | None:
     return owner.email if owner else None
 
 
-def notify_stock_alert(db, sku: SKU) -> None:
+def notify_stock_alert(db, sku: SKU, previous_stock: float | None = None) -> None:
+    """Email stock-alert users when a SKU is below its threshold.
+
+    Pass ``previous_stock`` when stock is being reduced so the alert only fires when the
+    SKU crosses the threshold, instead of on every order while it stays low.
+    """
     if not sku.alert_threshold_qty or sku.current_stock >= sku.alert_threshold_qty:
+        return
+    if previous_stock is not None and previous_stock < sku.alert_threshold_qty:
         return
     setting = get_app_settings(db)
     if not setting.email_alerts_enabled:

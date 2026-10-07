@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
@@ -22,12 +24,28 @@ app.mount(
 )
 
 
+@app.exception_handler(HTTPException)
+async def redirect_unauthenticated(request: Request, exc: HTTPException):
+    # Browsers hitting a page without a session get sent to the login form instead of a
+    # bare JSON error. API/htmx callers keep the normal 401 response.
+    if (
+        exc.status_code == 401
+        and request.method == "GET"
+        and "text/html" in request.headers.get("accept", "")
+        and not request.headers.get("hx-request")
+    ):
+        return RedirectResponse(url="/login", status_code=303)
+    return await http_exception_handler(request, exc)
+
+
 @app.get("/")
 def home(
     request: Request,
     db=Depends(get_db),
     current_user=Depends(get_current_user_optional),
 ):
+    if not current_user:
+        return RedirectResponse(url="/login", status_code=303)
     low_stock = db.scalars(
         select(SKU)
         .where(SKU.alert_threshold_qty.is_not(None))

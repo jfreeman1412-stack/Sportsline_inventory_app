@@ -1,0 +1,40 @@
+{# Tag badges for one SKU row, with inline add/remove. Expects sku, addable_tags,
+   sort_by_val, sort_dir_val and tag_param from skus/_row.html. #}
+{% set row_vals = {"sort_by": sort_by_val, "sort_dir": sort_dir_val} %}
+{% if tag_param %}{% set _ = row_vals.update({"tag_id": tag_param}) %}{% endif %}
+<div class="sku-tags-column d-flex flex-wrap gap-1 align-items-center">
+  {% for tag in sku.tags %}
+    <span class="badge d-inline-flex align-items-center gap-1" style="background-color: {{ tag.color or '#6c757d' }}; color: #fff;">
+      {{ tag.name }}
+      {% if current_user %}
+        <button
+          type="button"
+          class="btn-close btn-close-white"
+          style="font-size: 0.5rem;"
+          aria-label="Remove tag {{ tag.name }}"
+          hx-post="/skus/{{ sku.sku_id }}/tags/{{ tag.tag_id }}/remove"
+          hx-vals='{{ row_vals|tojson }}'
+          hx-target="#sku-row-{{ sku.sku_id }}"
+          hx-swap="outerHTML"
+        ></button>
+      {% endif %}
+    </span>
+  {% endfor %}
+  {% if current_user and addable_tags %}
+    <select
+      name="add_tag_id"
+      class="form-select form-select-sm w-auto"
+      aria-label="Add tag"
+      hx-post="/skus/{{ sku.sku_id }}/tags/add"
+      hx-trigger="change"
+      hx-vals='{{ row_vals|tojson }}'
+      hx-target="#sku-row-{{ sku.sku_id }}"
+      hx-swap="outerHTML"
+    >
+      <option value="" selected>+ tag</option>
+      {% for tag in addable_tags %}
+        <option value="{{ tag.tag_id }}">{{ tag.name }}</option>
+      {% endfor %}
+    </select>
+  {% endif %}
+</div>

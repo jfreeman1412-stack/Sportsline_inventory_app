@@ -16,7 +16,7 @@
         {% for tag in available_tags %}
           <a
             class="btn btn-sm btn-outline-secondary {% if selected_tag and selected_tag.tag_id == tag.tag_id %}active{% endif %}"
-            href="/skus?tag_id={{ tag.tag_id }}&sort={{ sort_by }}&dir={{ sort_dir }}"
+            href="/skus?tag_id={{ tag.tag_id }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}"
           >
             {{ tag.name }}
           </a>
@@ -85,7 +85,7 @@
             </th>
             <th data-column="average" data-resizable="true">
               <div class="column-label">
-                Avg/day ({{ average_window_days }})
+                Avg/day ({{ average_window_days }}d)
               </div>
               <span class="resize-handle" data-column="average"></span>
             </th>

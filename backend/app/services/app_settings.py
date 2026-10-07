@@ -11,6 +11,7 @@ def get_app_settings(db: Session) -> AppSetting:
     if not setting:
         setting = AppSetting()
         db.add(setting)
-        db.commit()
-        db.refresh(setting)
+        # Flush rather than commit: this is called mid-transaction (e.g. during a sync)
+        # and must not commit the caller's half-finished work.
+        db.flush()
     return setting

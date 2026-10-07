@@ -3,7 +3,8 @@ from datetime import datetime
 import pytest
 from sqlalchemy import select
 
-from backend.app.models import SKU, SKURecipe, SyncLog
+from backend.app.legacy_sync import group_orders
+from backend.app.models import AddOnMapping, Product, ProductRecipe, SKU, SKURecipe, SyncLog
 from backend.app.routers import sync
 from backend.app.schemas import OrderLineItemPayload, OrderPayload
 
@@ -45,7 +46,7 @@ def test_process_print_order_deducts_stock(session):
         order_open_status=40,
         line_items=[OrderLineItemPayload(cart_sku="BUNDLE", cart_qty=3)],
     )
-    sync._process_print_order(session, order)
+    sync._process_print_order(session, order, {})
     session.flush()
     session.refresh(child)
     assert child.current_stock < 100.0
@@ -65,3 +66,75 @@ def test_handle_orders_deduplication(session):
     assert processed_first == 1
     assert processed_second == 0
     assert session.scalar(select(SyncLog)).internal_order_id == 2
+
+
+def _order(order_id, status, sku="BUNDLE", qty=1, add_ons=None):
+    return OrderPayload(
+        order_id=order_id,
+        order_date=datetime.utcnow(),
+        order_open_status=status,
+        line_items=[OrderLineItemPayload(cart_sku=sku, cart_qty=qty, add_ons=add_ons or [])],
+    )
+
+
+def test_product_bom_deducts_once(session):
+    roll = SKU(name="Roll", sku_code="ROLL", current_stock=100.0, waste_pct=0.0)
+    product = Product(product_code="8X10", name="8x10 Print")
+    session.add_all([roll, product])
+    session.commit()
+    session.add(ProductRecipe(parent_product_id=product.product_id, child_sku_id=roll.sku_id, qty_used=10.0))
+    session.commit()
+    sync._process_print_order(session, _order(10, 40, sku="8X10", qty=2), {})
+    session.flush()
+    assert roll.current_stock == 80.0
+    # No bogus "missing parent" log from falling through to the legacy SKU path.
+    assert session.scalar(select(SyncLog).where(SyncLog.action == "print-missing-parent")) is None
+
+
+def test_unknown_cart_sku_does_not_crash(session):
+    sync._process_print_order(session, _order(11, 40, sku="NOPE"), {})
+    session.flush()
+    assert session.scalar(select(SyncLog).where(SyncLog.action == "print-missing-parent"))
+
+
+def test_addons_apply_to_product_lines(session):
+    magnet = SKU(name="Magnet", sku_code="MAG", current_stock=10.0, waste_pct=0.0)
+    product = Product(product_code="8X10", name="8x10 Print")
+    session.add_all([magnet, product, AddOnMapping(add_on_name="Magnet back", sku_code="MAG", quantity=1)])
+    session.commit()
+    session.add(ProductRecipe(parent_product_id=product.product_id, child_sku_id=magnet.sku_id, qty_used=0.0))
+    session.commit()
+    sync._process_print_order(
+        session, _order(12, 40, sku="8X10", add_ons=["Magnet Back"]), sync._load_addon_mappings(session)
+    )
+    session.flush()
+    assert magnet.current_stock == 9.0
+
+
+def test_force_sync_does_not_rededuct_poller_orders(session):
+    _, child = create_bom(session)
+    assert sync._handle_orders(session, [_order(3, 40)], action_label="poller-sync") == 1
+    stock_after_first = child.current_stock
+    assert sync._handle_orders(session, [_order(3, 40)], action_label="force-sync") == 0
+    assert child.current_stock == stock_after_first
+
+
+def test_shipped_status_still_processed_after_printing(session, monkeypatch):
+    create_bom(session)
+    calls = []
+    monkeypatch.setattr(sync, "fetch_shipstation_order", lambda order_id: calls.append(order_id))
+    sync._handle_orders(session, [_order(4, 40)], action_label="poller-sync")
+    sync._handle_orders(session, [_order(4, 39)], action_label="poller-sync")
+    assert calls == [4]
+
+
+def test_group_orders_splits_status_and_dedupes_lines():
+    when = datetime(2026, 1, 1)
+    rows = [
+        {"order_id": 5, "order_date": when, "order_open_status": 40, "cart_id": 1, "cart_sku": "A", "cart_qty": 2},
+        {"order_id": 5, "order_date": when, "order_open_status": 40, "cart_id": 1, "cart_sku": "A", "cart_qty": 2},
+        {"order_id": 5, "order_date": when, "order_open_status": 39, "cart_id": 1, "cart_sku": "A", "cart_qty": 2},
+    ]
+    grouped = group_orders(rows, {})
+    assert sorted(g["order_open_status"] for g in grouped) == [39, 40]
+    assert all(len(g["line_items"]) == 1 for g in grouped)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -7,6 +8,8 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 SYNC_QUERY = """
 SELECT
@@ -88,18 +91,32 @@ def _fetch_cart_options(cart_ids: set[int], connection) -> dict[int, list[str]]:
 
 
 def group_orders(rows: list[dict], cart_options: dict[int, list[str]]) -> list[dict]:
-    grouped: dict[int, dict] = {}
+    """Group joined status-log/cart rows into one payload per (order, status).
+
+    An order can appear more than once in a window (e.g. moved to printing and then
+    shipped, or set to printing twice). Each status is handled separately, and each cart
+    line is only counted once per status so quantities are never multiplied by the
+    number of status-log rows.
+    """
+    grouped: dict[tuple[int, int], dict] = {}
+    seen_lines: dict[tuple[int, int], set] = defaultdict(set)
     for row in rows:
         order_id = int(row["order_id"])
-        if order_id not in grouped:
-            grouped[order_id] = {
+        status = int(row["order_open_status"])
+        key = (order_id, status)
+        if key not in grouped:
+            grouped[key] = {
                 "order_id": order_id,
                 "order_date": row["order_date"],
-                "order_open_status": int(row["order_open_status"]),
+                "order_open_status": status,
                 "line_items": [],
             }
+        line_key = row.get("cart_id") or (row["cart_sku"], row["cart_qty"])
+        if line_key in seen_lines[key]:
+            continue
+        seen_lines[key].add(line_key)
         add_ons = cart_options.get(row.get("cart_id"), [])
-        grouped[order_id]["line_items"].append(
+        grouped[key]["line_items"].append(
             {
                 "cart_sku": row["cart_sku"],
                 "cart_qty": float(row["cart_qty"]),
@@ -113,6 +130,14 @@ def group_orders(rows: list[dict], cart_options: dict[int, list[str]]) -> list[d
 def get_legacy_product_name(cart_sku: str) -> str | None:
     if not cart_sku:
         return None
+    try:
+        return _query_legacy_product_name(cart_sku)
+    except pymysql.MySQLError:
+        logger.warning("Could not look up legacy product name for %s", cart_sku, exc_info=True)
+        return None
+
+
+def _query_legacy_product_name(cart_sku: str) -> str | None:
     connection = pymysql.connect(
         host=settings.mysql_host,
         port=settings.mysql_port,
@@ -141,6 +166,14 @@ def get_order_employee(order_id: int, update_date: datetime) -> str | None:
     lookup_date = update_date
     if isinstance(update_date, datetime):
         lookup_date = update_date.replace(tzinfo=None)
+    try:
+        return _query_order_employee(order_id, lookup_date)
+    except pymysql.MySQLError:
+        logger.warning("Could not look up employee for order %s", order_id, exc_info=True)
+        return None
+
+
+def _query_order_employee(order_id: int, lookup_date) -> str | None:
     connection = pymysql.connect(
         host=settings.mysql_host,
         port=settings.mysql_port,

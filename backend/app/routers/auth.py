@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, Request, Response, status
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
@@ -10,6 +12,7 @@ from sqlalchemy.orm import Session
 from ..auth import (
     clear_session_cookie,
     ensure_manager_or_owner,
+    ensure_owner,
     get_current_user,
     get_current_user_optional,
     hash_password,
@@ -20,7 +23,7 @@ from ..database import get_db
 from ..models import RoleEnum, User
 
 router = APIRouter(tags=["auth"])
-templates = Jinja2Templates(directory="backend/app/templates")
+templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
 
 
 def _first_user_role(db: Session) -> RoleEnum:
@@ -44,7 +47,7 @@ def login(
     password: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    user = db.scalar(select(User).where(User.email == email.lower()))
+    user = db.scalar(select(User).where(User.email == email.lower().strip()))
     if not user or not verify_password(password, user.password_hash):
         return templates.TemplateResponse(
             "auth/login.html",
@@ -101,9 +104,11 @@ def register(
 
 
 @router.post("/logout")
-def logout(response: Response):
-    clear_session_cookie(response)
-    return RedirectResponse(url="/login", status_code=302)
+def logout():
+    # The cookie must be cleared on the response actually returned to the browser.
+    redirect = RedirectResponse(url="/login", status_code=302)
+    clear_session_cookie(redirect)
+    return redirect
 
 
 @router.get("/account")
@@ -147,8 +152,31 @@ def update_user_alert(
     db: Session = Depends(get_db),
 ):
     user = db.scalar(select(User).where(User.user_id == user_id))
+    if user:
+        user.receives_stock_alerts = bool(receives_alerts)
+        db.commit()
+    return RedirectResponse(url="/settings", status_code=303)
+
+
+@router.post("/settings/users/{user_id}/role")
+def update_user_role(
+    user_id: int,
+    role: RoleEnum = Form(...),
+    current_user: User = Depends(ensure_owner),
+    db: Session = Depends(get_db),
+):
+    user = db.scalar(select(User).where(User.user_id == user_id))
     if not user:
-        return RedirectResponse(url="/settings/users", status_code=302)
-    user.receives_stock_alerts = receives_alerts
+        return RedirectResponse(url="/settings", status_code=303)
+    if user.role == RoleEnum.owner and role != RoleEnum.owner:
+        owners = db.scalar(
+            select(func.count()).select_from(User).where(User.role == RoleEnum.owner)
+        )
+        if owners <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The app needs at least one Owner. Promote someone else first.",
+            )
+    user.role = role
     db.commit()
-    return RedirectResponse(url="/settings/users", status_code=302)
+    return RedirectResponse(url="/settings", status_code=303)

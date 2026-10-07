@@ -28,7 +28,9 @@
       {% include "skus/_tags_column.html" %}
     {% endwith %}
   </td>
+  {% set can_adjust = current_user and current_user.role.value in ["manager","owner"] %}
   <td class="p-0" data-column="stock">
+    {% if can_adjust %}
     <form
       hx-post="/skus/{{ sku.sku_id }}/quick-update"
       hx-target="#sku-row-{{ sku.sku_id }}"
@@ -51,13 +53,18 @@
           id="stock-{{ sku.sku_id }}"
           placeholder="Stock"
           style="padding-right: 0.5rem;"
+          required
         />
         <label for="stock-{{ sku.sku_id }}">Stock</label>
       </div>
       <button class="btn btn-sm btn-outline-primary px-3">Save</button>
     </form>
+    {% else %}
+      <div class="p-2 text-end">{{ sku.current_stock }}</div>
+    {% endif %}
   </td>
   <td data-column="reorder">
+    {% if can_adjust %}
     <div class="form-floating" style="max-width: 160px;">
       <input
         form="quick-update-{{ sku.sku_id }}"
@@ -65,16 +72,18 @@
         type="number"
         name="alert_threshold_qty"
         step="0.01"
-        value="{{ sku.alert_threshold_qty or '' }}"
+        value="{{ sku.alert_threshold_qty if sku.alert_threshold_qty is not none else '' }}"
         id="threshold-{{ sku.sku_id }}"
         placeholder="Reorder amount"
       />
       <label for="threshold-{{ sku.sku_id }}">Reorder amount</label>
     </div>
+    {% else %}
+      {{ sku.alert_threshold_qty if sku.alert_threshold_qty is not none else "—" }}
+    {% endif %}
   </td>
   <td class="text-end" data-column="average">
-    {% set avg_usage_map = average_usage_map if average_usage_map is defined else {} %}
-    {% set avg = avg_usage_map.get(sku.sku_code) %}
+    {% set avg = average_usage_map.get(sku.sku_code) %}
     {% if avg %}
       {{ avg|round(2) }}
     {% else %}

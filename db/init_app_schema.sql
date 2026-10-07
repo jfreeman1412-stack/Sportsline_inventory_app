@@ -46,9 +46,6 @@ CREATE TABLE IF NOT EXISTS products (
     is_active BOOLEAN NOT NULL DEFAULT TRUE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-DROP INDEX IF EXISTS idx_product_code ON products;
-CREATE INDEX idx_product_code ON products(product_code);
-
 CREATE TABLE IF NOT EXISTS product_recipes (
     id INT AUTO_INCREMENT PRIMARY KEY,
     parent_product_id INT NOT NULL,
@@ -61,14 +58,12 @@ CREATE TABLE IF NOT EXISTS product_recipes (
 CREATE TABLE IF NOT EXISTS shipping_mapping (
     id INT AUTO_INCREMENT PRIMARY KEY,
     dimensions_string VARCHAR(64) UNIQUE,
-    items_json TEXT NOT NULL
+    items_json TEXT NOT NULL,
+    length FLOAT DEFAULT NULL,
+    width FLOAT DEFAULT NULL,
+    height FLOAT DEFAULT NULL,
+    package_code VARCHAR(64) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-ALTER TABLE shipping_mapping
-  ADD COLUMN IF NOT EXISTS length FLOAT DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS width FLOAT DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS height FLOAT DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS package_code VARCHAR(64) DEFAULT NULL;
 
 CREATE TABLE IF NOT EXISTS sync_logs (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -77,11 +72,10 @@ CREATE TABLE IF NOT EXISTS sync_logs (
     timestamp DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6),
     action VARCHAR(64) NOT NULL,
     details TEXT,
-    UNIQUE KEY uq_shipstation_order (shipstation_order_id)
+    UNIQUE KEY uq_shipstation_order (shipstation_order_id),
+    INDEX idx_sync_timestamp (timestamp),
+    INDEX idx_sync_order_action (internal_order_id, action)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-DROP INDEX IF EXISTS idx_sync_timestamp ON sync_logs;
-CREATE INDEX idx_sync_timestamp ON sync_logs(timestamp);
 
 CREATE TABLE IF NOT EXISTS users (
     user_id INT AUTO_INCREMENT PRIMARY KEY,

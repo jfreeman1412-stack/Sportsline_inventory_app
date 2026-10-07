@@ -1,7 +1,7 @@
 import logging
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import httpx
 
@@ -33,7 +33,9 @@ def main():
             if rows:
                 orders = group_orders(rows, cart_options)
                 emit_payload(orders)
-                last_sync = datetime.utcnow()
+                # Advance using the legacy DB's own timestamps. Using utcnow() here skipped
+                # orders whenever the legacy server's clock/timezone differed from UTC.
+                last_sync = max(row["order_date"] for row in rows)
                 logging.info("Synced %d orders", len(orders))
             else:
                 logging.debug("No new orders since %s", last_sync)

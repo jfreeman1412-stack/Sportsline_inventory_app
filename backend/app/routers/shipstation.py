@@ -18,17 +18,38 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["integrations"])
 
 
+SHIPPING_DEDUCTED_ACTION = "shipping-deducted"
+
+
+def shipstation_already_deducted(db: Session, shipstation_order_id: str | None) -> bool:
+    if not shipstation_order_id:
+        return False
+    return (
+        db.scalar(
+            select(SyncLog.id).where(
+                SyncLog.shipstation_order_id == shipstation_order_id,
+                SyncLog.action == SHIPPING_DEDUCTED_ACTION,
+            )
+        )
+        is not None
+    )
+
+
 def _record_shipping_log(
     db: Session,
     order_id: int,
     action: str,
     details: str,
-    shipstation_order_id: str,
+    shipstation_order_id: str | None,
     timestamp: datetime | None = None,
 ):
+    # sync_logs.shipstation_order_id is UNIQUE and acts as the dedup key, so only the
+    # first successful deduction for a shipment claims it; everything else keeps the
+    # ShipStation ID in the details text instead.
+    if shipstation_order_id:
+        details = f"[ShipStation {shipstation_order_id}] {details}"
     log = SyncLog(
         internal_order_id=order_id,
-        shipstation_order_id=shipstation_order_id,
         action=action,
         details=details,
     )
@@ -47,10 +68,7 @@ def shipstation_label(
     if x_internal_token != settings.internal_sync_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    existing = db.scalar(
-        select(SyncLog).where(SyncLog.shipstation_order_id == payload.shipstation_order_id)
-    )
-    if existing:
+    if shipstation_already_deducted(db, payload.shipstation_order_id):
         logger.info("Duplicate shipstation deduction skipped (%s)", payload.shipstation_order_id)
         return {"skipped": True}
 
@@ -59,7 +77,7 @@ def shipstation_label(
     if dims:
         length, width, height = dims
 
-    success = process_shipping_package(
+    deducted = process_shipping_package(
         db,
         payload.internal_order_id,
         payload.shipstation_order_id,
@@ -70,10 +88,10 @@ def shipstation_label(
         payload.dimensions,
     )
     db.commit()
-    if not success:
+    if deducted is None:
         raise HTTPException(status_code=422, detail="No shipping mapping found")
     logger.info("Shipping deduction processed for ShipStation ID %s", payload.shipstation_order_id)
-    return {"deducted": True}
+    return {"deducted": deducted}
 
 
 def _to_float(value):
@@ -86,7 +104,7 @@ def _to_float(value):
 def parse_dimensions_string(dimensions: str) -> tuple[float | None, float | None, float | None] | None:
     if not dimensions:
         return None
-    parts = [part.strip() for part in dimensions.lower().replace("x", "x").split("x") if part.strip()]
+    parts = [part.strip() for part in dimensions.lower().replace("×", "x").split("x") if part.strip()]
     if len(parts) < 3:
         return None
     try:
@@ -133,21 +151,24 @@ def _deduct_shipping_items(
     db: Session,
     mapping: ShippingMapping,
     order_id: int,
-    shipstation_order_id: str,
+    shipstation_order_id: str | None,
     details: str,
     timestamp: datetime | None = None,
-) -> int:
+    claim_shipstation_id: bool = True,
+) -> list[str]:
     try:
         items = json.loads(mapping.items_json)
     except json.JSONDecodeError:
         items = []
-    count = 0
+    deducted: list[str] = []
     for sku_code in items:
         sku = db.scalar(select(SKU).where(SKU.sku_code == sku_code))
         if not sku:
+            logger.warning("Shipping mapping %s references unknown SKU %s", mapping.id, sku_code)
             continue
+        previous_stock = sku.current_stock
         sku.current_stock = max(sku.current_stock - 1, 0.0)
-        notify_stock_alert(db, sku)
+        notify_stock_alert(db, sku, previous_stock=previous_stock)
         db.add(
             AuditLog(
                 action="deduct-shipping",
@@ -159,16 +180,32 @@ def _deduct_shipping_items(
                 details=f"ShipStation {shipstation_order_id}, SKU {sku.sku_code}",
             )
         )
-        count += 1
-    _record_shipping_log(
+        deducted.append(sku.sku_code)
+    log = _record_shipping_log(
         db,
         order_id,
-        "shipping-deducted",
-        f"{details} (deducted {count} SKUs for mapping {mapping.dimensions_string})",
+        SHIPPING_DEDUCTED_ACTION,
+        f"{details} (deducted {len(deducted)} SKUs for mapping {_mapping_label(mapping)})",
         shipstation_order_id,
         timestamp=timestamp,
     )
-    return count
+    # Older rows (e.g. unmapped events logged before this fix) may already hold the key.
+    if (
+        claim_shipstation_id
+        and shipstation_order_id
+        and db.scalar(
+            select(SyncLog.id).where(SyncLog.shipstation_order_id == shipstation_order_id)
+        )
+        is None
+    ):
+        log.shipstation_order_id = shipstation_order_id
+    return deducted
+
+
+def _mapping_label(mapping: ShippingMapping) -> str:
+    if mapping.dimensions_string:
+        return mapping.dimensions_string
+    return f"{mapping.length}x{mapping.width}x{mapping.height}"
 
 
 def process_shipping_package(
@@ -181,7 +218,10 @@ def process_shipping_package(
     package_code: str | None,
     dimensions_string: str | None,
     timestamp: datetime | None = None,
-) -> bool:
+    package_index: int = 0,
+) -> list[str] | None:
+    """Deduct the shipping SKUs for one package. Returns the deducted SKU codes, or None
+    when no mapping matched."""
     mapping = find_shipping_mapping(
         db, length, width, height, package_code, dimensions_string
     )
@@ -192,7 +232,7 @@ def process_shipping_package(
             order_id,
             "shipping-unmapped",
             f"Dimensions {dims_text} missing mapping",
-            shipstation_order_id or "unknown",
+            shipstation_order_id,
             timestamp=timestamp,
         )
         notify_unmapped_shipping(
@@ -201,16 +241,17 @@ def process_shipping_package(
             shipstation_order_id,
             dims_text,
         )
-        return False
-    _deduct_shipping_items(
+        return None
+    return _deduct_shipping_items(
         db,
         mapping,
         order_id,
-        shipstation_order_id or "unknown",
+        shipstation_order_id,
         f"ShipStation dims {dims_text}",
         timestamp=timestamp,
+        # Only the first package of a shipment claims the unique dedup key.
+        claim_shipstation_id=package_index == 0,
     )
-    return True
 
 
 def extract_package_data(order: dict) -> list[dict]:
