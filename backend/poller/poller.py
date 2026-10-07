@@ -30,9 +30,11 @@ def main():
     while True:
         try:
             rows, cart_options = fetch_order_rows(last_sync)
+            # Post every cycle, even with no new orders, so the app can retry shipped
+            # orders that were still waiting on a ShipStation label.
+            orders = group_orders(rows, cart_options) if rows else []
+            emit_payload(orders)
             if rows:
-                orders = group_orders(rows, cart_options)
-                emit_payload(orders)
                 # Advance using the legacy DB's own timestamps. Using utcnow() here skipped
                 # orders whenever the legacy server's clock/timezone differed from UTC.
                 last_sync = max(row["order_date"] for row in rows)
