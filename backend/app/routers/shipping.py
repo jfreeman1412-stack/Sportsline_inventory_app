@@ -10,6 +10,11 @@ from sqlalchemy.orm import Session
 from ..auth import ensure_manager_or_owner, get_current_user
 from ..database import get_db
 from ..models import SKU, ShippingMapping
+from ..services.audit import record_change
+
+
+def _label(mapping: ShippingMapping) -> str:
+    return mapping.dimensions_string or f"{mapping.length}x{mapping.width}x{mapping.height}"
 
 router = APIRouter(prefix="/shipping", tags=["shipping"])
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
@@ -58,6 +63,10 @@ def create_mapping(
         items_json=json.dumps(items),
     )
     db.add(mapping)
+    record_change(
+        db, current_user, "shipping-mapping-create",
+        f"Created shipping mapping {_label(mapping)} → {', '.join(items)}",
+    )
     db.commit()
     return RedirectResponse(url="/shipping/mappings", status_code=303)
 
@@ -111,6 +120,10 @@ def update_mapping(
     mapping.height = height
     mapping.package_code = package_code.strip() if package_code else None
     mapping.items_json = json.dumps(items)
+    record_change(
+        db, current_user, "shipping-mapping-edit",
+        f"Edited shipping mapping {_label(mapping)} → {', '.join(items)}",
+    )
     db.commit()
     return RedirectResponse(url="/shipping/mappings", status_code=303)
 
@@ -123,6 +136,9 @@ def delete_mapping(
 ):
     mapping = db.scalar(select(ShippingMapping).where(ShippingMapping.id == mapping_id))
     if mapping:
+        record_change(
+            db, current_user, "shipping-mapping-delete", f"Deleted shipping mapping {_label(mapping)}"
+        )
         db.delete(mapping)
         db.commit()
     return RedirectResponse(url="/shipping/mappings", status_code=303)

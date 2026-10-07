@@ -91,8 +91,8 @@
     {% endif %}
   </td>
   <td data-column="actions">
-    {% if current_user and current_user.role.value in ["manager","owner"] %}
-      <a href="/skus/{{ sku.sku_id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
+    <a href="/skus/{{ sku.sku_id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
+    {% if can_adjust %}
       <form method="post" action="/skus/{{ sku.sku_id }}/delete" class="d-inline">
         <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete SKU?');">Delete</button>
       </form>

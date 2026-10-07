@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
+  {% set is_manager = current_user and current_user.role.value in ["manager","owner"] %}
   <div class="card shadow-sm">
     <div class="card-body">
       <h2 class="card-title">Create Raw Material</h2>
@@ -60,11 +61,11 @@
           </div>
           <div class="col-md-4">
             <label class="form-label">Waste %</label>
-            <input type="number" step="0.01" name="waste_pct" class="form-control" value="0" />
+            <input type="number" step="0.01" name="waste_pct" {% if not is_manager %}disabled title="Managers set this"{% endif %} class="form-control" value="0" />
           </div>
           <div class="col-md-4">
             <label class="form-label">Alert Threshold</label>
-            <input type="number" step="0.01" name="alert_threshold_qty" class="form-control" />
+            <input type="number" step="0.01" name="alert_threshold_qty" {% if not is_manager %}disabled title="Managers set this"{% endif %} class="form-control" />
           </div>
         </div>
         <div class="mt-4">

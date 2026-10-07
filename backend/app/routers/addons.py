@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ..auth import ensure_manager_or_owner
 from ..database import get_db
 from ..models import AddOnMapping, SKU
+from ..services.audit import record_change
 
 router = APIRouter(prefix="/addons", tags=["addons"])
 BASE_TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
@@ -58,6 +59,10 @@ def create_addon(
         notes=notes,
     )
     db.add(mapping)
+    record_change(
+        db, current_user, "addon-create",
+        f"Mapped add-on {mapping.add_on_name} → {mapping.quantity} × {mapping.sku_code}",
+    )
     db.commit()
     return RedirectResponse(url="/addons", status_code=303)
 
@@ -103,6 +108,10 @@ def update_addon(
     mapping.sku_code = sku_code.strip()
     mapping.quantity = quantity
     mapping.notes = notes
+    record_change(
+        db, current_user, "addon-edit",
+        f"Mapped add-on {mapping.add_on_name} → {mapping.quantity} × {mapping.sku_code}",
+    )
     db.commit()
     return RedirectResponse(url="/addons", status_code=303)
 
@@ -115,6 +124,7 @@ def delete_addon(
 ):
     mapping = db.scalar(select(AddOnMapping).where(AddOnMapping.id == mapping_id))
     if mapping:
+        record_change(db, current_user, "addon-delete", f"Removed add-on mapping {mapping.add_on_name}")
         db.delete(mapping)
         db.commit()
     return RedirectResponse(url="/addons", status_code=303)

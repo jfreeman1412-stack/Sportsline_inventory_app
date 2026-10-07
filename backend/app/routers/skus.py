@@ -14,14 +14,40 @@ from sqlalchemy.orm import Session
 
 from ..auth import ensure_manager_or_owner, get_current_user
 from ..database import get_db
-from ..models import AuditLog, PurchaseLog, SKU, SKURecipe, Tag, User
+from ..models import AuditLog, PurchaseLog, RoleEnum, SKU, SKURecipe, Tag, User
 from ..notifications import notify_price_spike, notify_stock_alert
+from ..services.audit import DEDUCTION_ACTIONS, describe_changes, record_change, snapshot
 
 BASE_TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
 router = APIRouter(prefix="/skus", tags=["skus"])
 templates = Jinja2Templates(directory=str(BASE_TEMPLATES))
 
 AVERAGE_WINDOW_DAYS = 30
+SKU_AUDIT_FIELDS = (
+    "name",
+    "description",
+    "vendor_name",
+    "vendor_url",
+    "salesman_name",
+    "salesman_phone",
+    "salesman_email",
+    "unit_of_measure",
+    "current_stock",
+    "waste_pct",
+    "alert_threshold_qty",
+)
+PURCHASE_AUDIT_FIELDS = (
+    "purchase_date",
+    "quantity",
+    "price",
+    "applies_to_stock",
+    "supplier_name",
+    "supplier_code",
+)
+
+
+def _is_manager(user: User) -> bool:
+    return user.role in (RoleEnum.manager, RoleEnum.owner)
 SORT_COLUMNS = {
     "name": SKU.name,
     "sku_code": SKU.sku_code,
@@ -204,19 +230,13 @@ def quick_update_sku(
     sku.current_stock = current_stock
     sku.alert_threshold_qty = _parse_optional_float(alert_threshold_qty)
     if previous_stock != current_stock:
-        db.add(
-            AuditLog(
-                user_id=current_user.user_id,
-                action="manual-adjust",
-                child_sku_code=sku.sku_code,
-                child_sku_name=sku.name,
-                child_unit=sku.unit_of_measure,
-                quantity=current_stock - previous_stock,
-                details=(
-                    f"{current_user.email} set stock of {sku.sku_code} "
-                    f"from {previous_stock} to {current_stock}"
-                ),
-            )
+        record_change(
+            db,
+            current_user,
+            "manual-adjust",
+            describe_changes({"current_stock": previous_stock}, {"current_stock": current_stock}),
+            sku=sku,
+            quantity=current_stock - previous_stock,
         )
     db.commit()
     notify_stock_alert(db, sku, previous_stock=previous_stock)
@@ -262,7 +282,7 @@ def remove_sku_tag(
 @router.get("/create")
 def create_sku_form(
     request: Request,
-    current_user: User = Depends(ensure_manager_or_owner),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     return templates.TemplateResponse(
@@ -292,8 +312,11 @@ def create_sku(
     alert_threshold_qty: float | None = Form(None),
     tag_ids: list[int] | None = Form(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(ensure_manager_or_owner),
+    current_user: User = Depends(get_current_user),
 ):
+    if not _is_manager(current_user):
+        # Operators add basic SKUs; waste % and thresholds are Manager settings.
+        waste_pct, alert_threshold_qty = 0.0, None
     sku = SKU(
         name=name.strip(),
         sku_code=sku_code.strip(),
@@ -310,6 +333,13 @@ def create_sku(
     )
     _sync_tags(db, sku, tag_ids)
     db.add(sku)
+    record_change(
+        db,
+        current_user,
+        "sku-create",
+        f"Created {sku.sku_code} with stock {sku.current_stock}",
+        sku=sku,
+    )
     try:
         db.commit()
     except IntegrityError:
@@ -338,6 +368,19 @@ def sku_detail(
     )
     sorted_logs = list(reversed(purchase_logs))
     last_purchase = purchase_logs[0] if purchase_logs else None
+    history = db.scalars(
+        select(AuditLog)
+        .where(AuditLog.child_sku_code == sku.sku_code)
+        .where(AuditLog.action.not_in(DEDUCTION_ACTIONS))
+        .order_by(AuditLog.timestamp.desc(), AuditLog.id.desc())
+        .limit(25)
+    ).all()
+    user_emails = {
+        user.user_id: user.email
+        for user in db.scalars(
+            select(User).where(User.user_id.in_({h.user_id for h in history if h.user_id}))
+        )
+    }
     return templates.TemplateResponse(
         "skus/detail.html",
         {
@@ -352,6 +395,8 @@ def sku_detail(
             "now": datetime.utcnow(),
             "current_user": current_user,
             "last_purchase": last_purchase,
+            "history": history,
+            "user_emails": user_emails,
             "available_tags": _get_all_tags(db),
         },
     )
@@ -362,7 +407,7 @@ def edit_sku_form(
     request: Request,
     sku_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(ensure_manager_or_owner),
+    current_user: User = Depends(get_current_user),
 ):
     sku = _get_sku_or_404(db, sku_id)
     return templates.TemplateResponse(
@@ -388,27 +433,38 @@ def edit_sku(
     salesman_phone: str | None = Form(None),
     salesman_email: str | None = Form(None),
     unit_of_measure: str = Form("pieces"),
-    current_stock: float = Form(0.0),
-    waste_pct: float = Form(0.0),
-    alert_threshold_qty: float | None = Form(None),
+    current_stock: str | None = Form(None),
+    waste_pct: str | None = Form(None),
+    alert_threshold_qty: str | None = Form(None),
     tag_ids: list[int] | None = Form(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(ensure_manager_or_owner),
+    current_user: User = Depends(get_current_user),
 ):
     sku = _get_sku_or_404(db, sku_id)
+    before = snapshot(sku, SKU_AUDIT_FIELDS)
     previous_stock = sku.current_stock
     sku.name = name.strip()
     sku.description = description
     sku.unit_of_measure = unit_of_measure
-    sku.current_stock = current_stock
-    sku.waste_pct = waste_pct
-    sku.alert_threshold_qty = alert_threshold_qty
+    if _is_manager(current_user):
+        # Stock overrides, waste % and thresholds are Manager/Owner only.
+        new_stock = _parse_optional_float(current_stock)
+        if new_stock is not None:
+            sku.current_stock = new_stock
+        sku.waste_pct = _parse_optional_float(waste_pct) or 0.0
+        sku.alert_threshold_qty = _parse_optional_float(alert_threshold_qty)
     _sync_tags(db, sku, tag_ids)
     sku.vendor_name = vendor_name.strip() if vendor_name else None
     sku.vendor_url = vendor_url.strip() if vendor_url else None
     sku.salesman_name = salesman_name.strip() if salesman_name else None
     sku.salesman_phone = salesman_phone.strip() if salesman_phone else None
     sku.salesman_email = salesman_email.strip() if salesman_email else None
+    changes = describe_changes(before, snapshot(sku, SKU_AUDIT_FIELDS))
+    if changes:
+        stock_delta = sku.current_stock - previous_stock
+        record_change(
+            db, current_user, "sku-edit", changes, sku=sku, quantity=stock_delta or None
+        )
     db.commit()
     notify_stock_alert(db, sku, previous_stock=previous_stock)
     return RedirectResponse(url=f"/skus/{sku.sku_id}", status_code=303)
@@ -422,6 +478,7 @@ def delete_sku(
     current_user: User = Depends(ensure_manager_or_owner),
 ):
     sku = _get_sku_or_404(db, sku_id)
+    record_change(db, current_user, "sku-delete", f"Deleted {sku.sku_code} ({sku.name})", sku=sku)
     db.delete(sku)
     try:
         db.commit()
@@ -454,6 +511,9 @@ def add_bom_item(
         parent_sku_id=sku.sku_id, child_sku_id=child.sku_id, qty_used=qty_used
     )
     db.add(recipe)
+    record_change(
+        db, current_user, "bom-add", f"Added {qty_used} × {child.sku_code} to BOM", sku=sku
+    )
     db.commit()
     return RedirectResponse(url=f"/skus/{sku.sku_id}", status_code=303)
 
@@ -467,7 +527,14 @@ def remove_bom_item(
     current_user: User = Depends(ensure_manager_or_owner),
 ):
     recipe = db.scalar(select(SKURecipe).where(SKURecipe.id == recipe_id))
-    if recipe:
+    if recipe and recipe.parent_sku_id == sku_id:
+        record_change(
+            db,
+            current_user,
+            "bom-remove",
+            f"Removed {recipe.child.sku_code} from BOM",
+            sku=recipe.parent,
+        )
         db.delete(recipe)
         db.commit()
     return RedirectResponse(url=f"/skus/{sku_id}", status_code=303)
@@ -514,6 +581,15 @@ def add_purchase_log(
     if applies_to_stock:
         sku.current_stock += quantity
     db.add(log)
+    record_change(
+        db,
+        current_user,
+        "purchase-add",
+        f"Logged purchase of {quantity} at {price} on {purchase_date}"
+        + (" (added to stock)" if applies_to_stock else ""),
+        sku=sku,
+        quantity=quantity if applies_to_stock else None,
+    )
     db.commit()
     notify_stock_alert(db, sku)
     if previous_price:
@@ -569,6 +645,8 @@ def edit_purchase_log(
         .all()
     )
     previous_price = previous_logs[0].price if previous_logs else None
+    before = snapshot(log, PURCHASE_AUDIT_FIELDS)
+    stock_before = sku.current_stock
     if log.applies_to_stock:
         sku.current_stock -= log.quantity
     log.purchase_date = date.fromisoformat(purchase_date)
@@ -581,6 +659,16 @@ def edit_purchase_log(
     log.notes = notes
     if log.applies_to_stock:
         sku.current_stock += quantity
+    changes = describe_changes(before, snapshot(log, PURCHASE_AUDIT_FIELDS))
+    if changes:
+        record_change(
+            db,
+            current_user,
+            "purchase-edit",
+            f"Edited purchase #{log.id}: {changes}",
+            sku=sku,
+            quantity=(sku.current_stock - stock_before) or None,
+        )
     db.commit()
     notify_stock_alert(db, sku)
     if previous_price:
