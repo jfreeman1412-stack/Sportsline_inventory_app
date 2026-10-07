@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
@@ -11,7 +12,7 @@ from ..database import get_db
 from ..models import SKU, ShippingMapping
 
 router = APIRouter(prefix="/shipping", tags=["shipping"])
-templates = Jinja2Templates(directory="backend/app/templates")
+templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
 
 
 @router.get("/mappings")

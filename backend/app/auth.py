@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Request, Response, status
-from itsdangerous import BadSignature, URLSafeSerializer
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,7 +11,7 @@ from .database import get_db
 from .models import RoleEnum, User
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
-serializer = URLSafeSerializer(settings.session_secret, salt="inventory-session")
+serializer = URLSafeTimedSerializer(settings.session_secret, salt="inventory-session")
 SESSION_COOKIE = "inventory_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 7
 
@@ -33,10 +33,14 @@ def _read_session_token(request: Request) -> int | None:
     if not raw:
         return None
     try:
-        payload = serializer.loads(raw)
-    except BadSignature:
+        # Enforce expiry server-side too; a copied cookie must not stay valid forever.
+        payload = serializer.loads(raw, max_age=SESSION_MAX_AGE)
+    except BadSignature:  # also covers SignatureExpired
         return None
-    return int(payload.get("user_id"))
+    try:
+        return int(payload.get("user_id"))
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 def set_session_cookie(response: Response, user_id: int) -> None:
@@ -53,7 +57,7 @@ def set_session_cookie(response: Response, user_id: int) -> None:
 
 
 def clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(SESSION_COOKIE)
+    response.delete_cookie(SESSION_COOKIE, path="/")
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:

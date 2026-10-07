@@ -94,7 +94,7 @@ class Product(Base):
     price = Column(Float, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
 
-    recipes = relationship("ProductRecipe", back_populates="parent")
+    recipes = relationship("ProductRecipe", back_populates="parent", cascade="all, delete-orphan")
 
 
 class ProductRecipe(Base):

@@ -50,7 +50,7 @@
   </div>
   <div class="mb-3">
     <label class="form-label">Notes</label>
-    <textarea name="notes" class="form-control" rows="2">{{ mapping.notes or '' }}</textarea>
+    <textarea name="notes" class="form-control" rows="2">{{ mapping.notes if mapping and mapping.notes else '' }}</textarea>
   </div>
   <button class="btn btn-primary">{{ mode }} mapping</button>
   <a class="btn btn-outline-secondary ms-2" href="/addons">Cancel</a>

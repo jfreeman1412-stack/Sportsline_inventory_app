@@ -202,19 +202,6 @@
                 <label class="form-check-label" for="addToStock">Add to stock</label>
               </div>
             </div>
-            <div class="col-12">
-              <label class="form-label">Tags</label>
-              <select name="tag_ids" class="form-select" multiple>
-                {% for tag in available_tags %}
-                  <option
-                    value="{{ tag.tag_id }}"
-                    {% if tag in sku.tags %}selected{% endif %}
-                  >
-                    {{ tag.name }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
             <div class="col-md-6">
               <label class="form-label visually-hidden">Supplier</label>
               <input

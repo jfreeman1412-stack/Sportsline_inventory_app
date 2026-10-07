@@ -1,23 +1,35 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+import csv
+import io
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import asc, desc, select
+from sqlalchemy import asc, desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth import ensure_manager_or_owner, get_current_user
 from ..database import get_db
-from ..models import PurchaseLog, SKU, SKURecipe, Tag, User
+from ..models import AuditLog, PurchaseLog, SKU, SKURecipe, Tag, User
 from ..notifications import notify_price_spike, notify_stock_alert
 
 BASE_TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
 router = APIRouter(prefix="/skus", tags=["skus"])
 templates = Jinja2Templates(directory=str(BASE_TEMPLATES))
+
+AVERAGE_WINDOW_DAYS = 30
+SORT_COLUMNS = {
+    "name": SKU.name,
+    "sku_code": SKU.sku_code,
+    "unit": SKU.unit_of_measure,
+    "vendor": SKU.vendor_name,
+    "stock": SKU.current_stock,
+    "threshold": SKU.alert_threshold_qty,
+}
 
 
 def _get_sku_or_404(db: Session, sku_id: int) -> SKU:
@@ -49,6 +61,66 @@ def _calculate_price_pct_changes(logs: list[PurchaseLog]) -> list[dict[str, str 
     return pct_changes
 
 
+def _average_daily_usage(db: Session) -> dict[str, float]:
+    """Average deducted quantity per day over the last AVERAGE_WINDOW_DAYS, by SKU code."""
+    cutoff = datetime.utcnow() - timedelta(days=AVERAGE_WINDOW_DAYS)
+    rows = db.execute(
+        select(AuditLog.child_sku_code, func.sum(AuditLog.quantity))
+        .where(AuditLog.action.in_(["deduct-print", "deduct-shipping"]))
+        .where(AuditLog.timestamp >= cutoff)
+        .group_by(AuditLog.child_sku_code)
+    ).all()
+    return {code: (total or 0.0) / AVERAGE_WINDOW_DAYS for code, total in rows if code}
+
+
+def _list_context(
+    request: Request,
+    db: Session,
+    current_user: User,
+    skus: list[SKU],
+    sort_by: str,
+    sort_dir: str,
+    tag_id: int | None,
+) -> dict:
+    available_tags = _get_all_tags(db)
+    return {
+        "request": request,
+        "current_user": current_user,
+        "sort_by": sort_by if sort_by in SORT_COLUMNS else "name",
+        "sort_dir": "desc" if sort_dir.lower() == "desc" else "asc",
+        "available_tags": available_tags,
+        "selected_tag": next((t for t in available_tags if t.tag_id == tag_id), None),
+        "available_optionals": {
+            sku.sku_id: [tag for tag in available_tags if tag not in sku.tags] for sku in skus
+        },
+        "average_usage_map": _average_daily_usage(db),
+        "average_window_days": AVERAGE_WINDOW_DAYS,
+    }
+
+
+def _render_row(
+    request: Request,
+    db: Session,
+    current_user: User,
+    sku: SKU,
+    sort_by: str,
+    sort_dir: str,
+    tag_id: int | None,
+):
+    context = _list_context(request, db, current_user, [sku], sort_by, sort_dir, tag_id)
+    context["sku"] = sku
+    return templates.TemplateResponse("skus/_row.html", context)
+
+
+def _parse_optional_float(value: str | None) -> float | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Not a number: {value}")
+
+
 def _sync_tags(db: Session, sku: SKU, tag_ids: list[int] | None):
     if tag_ids:
         tags = db.scalars(select(Tag).where(Tag.tag_id.in_(tag_ids))).all()
@@ -66,34 +138,125 @@ def list_skus(
     sort_by: str = "name",
     sort_dir: str = "asc",
 ):
-    column_map = {
-        "name": SKU.name,
-        "sku_code": SKU.sku_code,
-        "unit": SKU.unit_of_measure,
-        "vendor": SKU.vendor_name,
-        "stock": SKU.current_stock,
-        "threshold": SKU.alert_threshold_qty,
-    }
-    column = column_map.get(sort_by, SKU.name)
-    direction = "desc" if sort_dir.lower() == "desc" else "asc"
-    order = desc(column) if direction == "desc" else asc(column)
-    available_tags = _get_all_tags(db)
+    column = SORT_COLUMNS.get(sort_by, SKU.name)
+    order = desc(column) if sort_dir.lower() == "desc" else asc(column)
     query = select(SKU)
     if tag_id:
         query = query.join(SKU.tags).where(Tag.tag_id == tag_id)
     skus = db.scalars(query.order_by(order)).all()
-    return templates.TemplateResponse(
-        "skus/list.html",
-        {
-            "request": request,
-            "skus": skus,
-            "current_user": current_user,
-            "sort_by": sort_by,
-            "sort_dir": direction,
-            "available_tags": available_tags,
-            "selected_tag": next((t for t in available_tags if t.tag_id == tag_id), None),
-        },
+    context = _list_context(request, db, current_user, skus, sort_by, sort_dir, tag_id)
+    context["skus"] = skus
+    return templates.TemplateResponse("skus/list.html", context)
+
+
+@router.get("/export")
+def export_skus(
+    format: str = "csv",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    skus = db.scalars(select(SKU).order_by(SKU.name)).all()
+    if format == "markdown":
+        rows = ["| SKU | Name | Stock | Threshold |", "| --- | --- | --- | --- |"]
+        rows.extend(
+            f"| {sku.sku_code} | {sku.name} | {sku.current_stock} | {sku.alert_threshold_qty or '-'} |"
+            for sku in skus
+        )
+        return PlainTextResponse("\n".join(rows), media_type="text/markdown")
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        ["sku_code", "name", "unit", "current_stock", "alert_threshold_qty", "vendor_name"]
     )
+    for sku in skus:
+        writer.writerow(
+            [
+                sku.sku_code,
+                sku.name,
+                sku.unit_of_measure,
+                sku.current_stock,
+                "" if sku.alert_threshold_qty is None else sku.alert_threshold_qty,
+                sku.vendor_name or "",
+            ]
+        )
+    return PlainTextResponse(
+        buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="raw-materials.csv"'},
+    )
+
+
+@router.post("/{sku_id}/quick-update")
+def quick_update_sku(
+    request: Request,
+    sku_id: int,
+    current_stock: float = Form(...),
+    alert_threshold_qty: str | None = Form(None),
+    sort_by: str = Form("name"),
+    sort_dir: str = Form("asc"),
+    tag_id: int | None = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(ensure_manager_or_owner),
+):
+    """Inline stock count / reorder amount edit from the Raw Materials table."""
+    sku = _get_sku_or_404(db, sku_id)
+    previous_stock = sku.current_stock
+    sku.current_stock = current_stock
+    sku.alert_threshold_qty = _parse_optional_float(alert_threshold_qty)
+    if previous_stock != current_stock:
+        db.add(
+            AuditLog(
+                user_id=current_user.user_id,
+                action="manual-adjust",
+                child_sku_code=sku.sku_code,
+                child_sku_name=sku.name,
+                child_unit=sku.unit_of_measure,
+                quantity=current_stock - previous_stock,
+                details=(
+                    f"{current_user.email} set stock of {sku.sku_code} "
+                    f"from {previous_stock} to {current_stock}"
+                ),
+            )
+        )
+    db.commit()
+    notify_stock_alert(db, sku, previous_stock=previous_stock)
+    return _render_row(request, db, current_user, sku, sort_by, sort_dir, tag_id)
+
+
+@router.post("/{sku_id}/tags/add")
+def add_sku_tag(
+    request: Request,
+    sku_id: int,
+    add_tag_id: int = Form(...),
+    sort_by: str = Form("name"),
+    sort_dir: str = Form("asc"),
+    tag_id: int | None = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    sku = _get_sku_or_404(db, sku_id)
+    tag = db.scalar(select(Tag).where(Tag.tag_id == add_tag_id))
+    if tag and tag not in sku.tags:
+        sku.tags.append(tag)
+        db.commit()
+    return _render_row(request, db, current_user, sku, sort_by, sort_dir, tag_id)
+
+
+@router.post("/{sku_id}/tags/{remove_tag_id}/remove")
+def remove_sku_tag(
+    request: Request,
+    sku_id: int,
+    remove_tag_id: int,
+    sort_by: str = Form("name"),
+    sort_dir: str = Form("asc"),
+    tag_id: int | None = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    sku = _get_sku_or_404(db, sku_id)
+    sku.tags = [tag for tag in sku.tags if tag.tag_id != remove_tag_id]
+    db.commit()
+    return _render_row(request, db, current_user, sku, sort_by, sort_dir, tag_id)
 
 
 @router.get("/create")
@@ -208,6 +371,7 @@ def edit_sku_form(
             "request": request,
             "sku": sku,
             "available_tags": _get_all_tags(db),
+            "current_user": current_user,
         },
     )
 
@@ -232,6 +396,7 @@ def edit_sku(
     current_user: User = Depends(ensure_manager_or_owner),
 ):
     sku = _get_sku_or_404(db, sku_id)
+    previous_stock = sku.current_stock
     sku.name = name.strip()
     sku.description = description
     sku.unit_of_measure = unit_of_measure
@@ -245,7 +410,7 @@ def edit_sku(
     sku.salesman_phone = salesman_phone.strip() if salesman_phone else None
     sku.salesman_email = salesman_email.strip() if salesman_email else None
     db.commit()
-    notify_stock_alert(db, sku)
+    notify_stock_alert(db, sku, previous_stock=previous_stock)
     return RedirectResponse(url=f"/skus/{sku.sku_id}", status_code=303)
 
 
@@ -258,7 +423,17 @@ def delete_sku(
 ):
     sku = _get_sku_or_404(db, sku_id)
     db.delete(sku)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This raw material is still used in a BOM or has purchase history. "
+                "Remove it from those first."
+            ),
+        )
     return RedirectResponse(url="/skus", status_code=303)
 
 
@@ -341,7 +516,7 @@ def add_purchase_log(
     db.add(log)
     db.commit()
     notify_stock_alert(db, sku)
-    if previous_price and price > previous_price * 1.1:
+    if previous_price:
         notify_price_spike(db, sku, previous_price, price)
     return RedirectResponse(url=f"/skus/{sku.sku_id}", status_code=303)
 
@@ -408,28 +583,6 @@ def edit_purchase_log(
         sku.current_stock += quantity
     db.commit()
     notify_stock_alert(db, sku)
-    if previous_price and price > previous_price * 1.1:
+    if previous_price:
         notify_price_spike(db, sku, previous_price, price)
     return RedirectResponse(url=f"/skus/{sku.sku_id}", status_code=303)
-
-
-@router.get("/export")
-def export_skus(
-    format: str = "csv",
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    skus = db.scalars(select(SKU)).all()
-    if format == "markdown":
-        rows = ["| SKU | Name | Stock | Threshold |", "| --- | --- | --- | --- |"]
-        rows.extend(
-            f"| {sku.sku_code} | {sku.name} | {sku.current_stock} | {sku.alert_threshold_qty or '-'} |"
-            for sku in skus
-        )
-        return PlainTextResponse("\n".join(rows), media_type="text/markdown")
-    body = "sku_code,name,current_stock,alert_threshold_qty\n"
-    body += "\n".join(
-        f"{sku.sku_code},{sku.name},{sku.current_stock},{sku.alert_threshold_qty or ''}"
-        for sku in skus
-    )
-    return PlainTextResponse(body, media_type="text/csv")

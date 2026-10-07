@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 import logging
 
+import pymysql
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import func, select
@@ -30,10 +31,17 @@ from .shipstation import (
     extract_package_data,
     fetch_shipstation_order,
     process_shipping_package,
+    shipstation_already_deducted,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["internal"])
+
+PRINT_DONE_ACTION = "print-deducted"
+SHIPPING_DONE_ACTION = "shipping-awaiting-label"
+# Outcome records that mark an order/status pair as handled, whichever source
+# (poller or Force Sync) processed it first.
+STATUS_DONE_ACTIONS = {40: PRINT_DONE_ACTION, 39: SHIPPING_DONE_ACTION}
 
 
 def _record_sync(
@@ -124,8 +132,9 @@ def _deduct_child(
 ) -> None:
     waste_multiplier = 1 + (child.waste_pct or 0.0) / 100
     deduction = base_qty * waste_multiplier
+    previous_stock = child.current_stock
     child.current_stock = max(child.current_stock - deduction, 0.0)
-    notify_stock_alert(db, child)
+    notify_stock_alert(db, child, previous_stock=previous_stock)
     db.add(
         AuditLog(
             action="deduct-print",
@@ -146,80 +155,70 @@ def _process_print_order(
     db: Session, order: OrderPayload, addon_mappings: dict[str, list[AddOnMapping]]
 ) -> None:
     for line in order.line_items:
-        product = db.scalar(select(Product).where(Product.product_code == line.cart_sku))
         line_qty = float(line.cart_qty)
-        legacy_product_name = get_legacy_product_name(line.cart_sku)
-        product_display_name = product.name if product else legacy_product_name or line.cart_sku
-        product_code_value = line.cart_sku
+        product = db.scalar(select(Product).where(Product.product_code == line.cart_sku))
         if product:
-            recipes = (
-                db.scalars(
+            product_display_name = product.name
+            recipe_children = [
+                (recipe.child, recipe.qty_used)
+                for recipe in db.scalars(
                     select(ProductRecipe).where(
                         ProductRecipe.parent_product_id == product.product_id
                     )
-                )
-                .all()
+                ).all()
+            ]
+            source_label = f"product {product.product_code}"
+            missing_action, missing_detail = (
+                "product-no-recipes",
+                f"Product {product.product_code} has no BOM recipes, skipping",
             )
-            if not recipes:
+        else:
+            # Fall back to the legacy SKU-based BOM when no product entry exists.
+            product_display_name = get_legacy_product_name(line.cart_sku) or line.cart_sku
+            sku = db.scalar(select(SKU).where(SKU.sku_code == line.cart_sku))
+            if not sku:
                 _record_sync(
                     db,
                     order.order_id,
-                    "product-no-recipes",
-                    f"Product {product.product_code} has no BOM recipes, skipping",
+                    "print-missing-parent",
+                    f"Missing product/SKU {line.cart_sku}, skipping",
                     timestamp=order.order_date,
                 )
-                continue
-        for recipe in recipes:
+                recipe_children = None
+            else:
+                recipe_children = [
+                    (recipe.child, recipe.qty_used)
+                    for recipe in db.scalars(
+                        select(SKURecipe).where(SKURecipe.parent_sku_id == sku.sku_id)
+                    ).all()
+                ]
+                source_label = f"SKU {sku.sku_code}"
+                missing_action, missing_detail = (
+                    "print-no-recipes",
+                    f"SKU {sku.sku_code} has no BOM recipes, skipping",
+                )
+        if recipe_children is not None and not recipe_children:
+            _record_sync(
+                db, order.order_id, missing_action, missing_detail, timestamp=order.order_date
+            )
+        for child, qty_used in recipe_children or []:
             _deduct_child(
                 db,
                 order.order_id,
-                recipe.child,
-                recipe.qty_used * line.cart_qty,
-                f"product {product.product_code}",
-                product_code=product_code_value,
+                child,
+                qty_used * line_qty,
+                source_label,
+                product_code=line.cart_sku,
                 product_name=product_display_name,
                 product_quantity=line_qty,
             )
-            continue
-        sku = db.scalar(select(SKU).where(SKU.sku_code == line.cart_sku))
-        if not sku:
-            _record_sync(
-                db,
-                order.order_id,
-                "print-missing-parent",
-                f"Missing SKU {line.cart_sku}, skipping",
-                timestamp=order.order_date,
-            )
-            continue
-        recipes = (
-            db.scalars(select(SKURecipe).where(SKURecipe.parent_sku_id == sku.sku_id)).all()
-        )
-        if not recipes:
-            _record_sync(
-                db,
-                order.order_id,
-                "print-no-recipes",
-                f"SKU {sku.sku_code} has no BOM recipes, skipping",
-                timestamp=order.order_date,
-            )
-            continue
-        for recipe in recipes:
-            _deduct_child(
-                db,
-                order.order_id,
-                recipe.child,
-                recipe.qty_used * line.cart_qty,
-                f"SKU {sku.sku_code}",
-                product_code=product_code_value,
-                product_name=product_display_name,
-                product_quantity=line_qty,
-            )
+        # Add-ons deduct their own SKUs regardless of whether the base product is mapped.
         for add_on in line.add_ons or []:
             _apply_addon_mapping(db, order.order_id, add_on, addon_mappings, order.order_date)
     _record_sync(
         db,
         order.order_id,
-        "print-deducted",
+        PRINT_DONE_ACTION,
         f"Processed {len(order.line_items)} line items",
         timestamp=order.order_date,
     )
@@ -229,7 +228,7 @@ def _process_shipping_wait(db: Session, order: OrderPayload) -> None:
     _record_sync(
         db,
         order.order_id,
-        "shipping-awaiting-label",
+        SHIPPING_DONE_ACTION,
         f"Status 39, waiting for ShipStation label. Items={len(order.line_items)}",
         timestamp=order.order_date,
     )
@@ -237,7 +236,10 @@ def _process_shipping_wait(db: Session, order: OrderPayload) -> None:
     if not ship_order:
         return
     shipstation_order_id = str(ship_order.get("orderId") or ship_order.get("orderKey") or order.order_id)
-    for pkg in extract_package_data(ship_order):
+    if shipstation_already_deducted(db, shipstation_order_id):
+        # The label webhook already deducted this shipment.
+        return
+    for index, pkg in enumerate(extract_package_data(ship_order)):
         process_shipping_package(
             db,
             order.order_id,
@@ -248,6 +250,7 @@ def _process_shipping_wait(db: Session, order: OrderPayload) -> None:
             pkg.get("package_code"),
             pkg.get("dimension_string"),
             timestamp=order.order_date,
+            package_index=index,
         )
 
 
@@ -255,14 +258,16 @@ def _handle_orders(db: Session, orders: list[OrderPayload], action_label: str) -
     processed = 0
     addon_mappings = _load_addon_mappings(db)
     for order in orders:
-        existing = db.scalar(
-            select(SyncLog).where(
-                SyncLog.internal_order_id == order.order_id,
-                SyncLog.action == action_label,
+        done_action = STATUS_DONE_ACTIONS.get(order.order_open_status)
+        if done_action:
+            existing = db.scalar(
+                select(SyncLog.id).where(
+                    SyncLog.internal_order_id == order.order_id,
+                    SyncLog.action == done_action,
+                )
             )
-        )
-        if existing:
-            continue
+            if existing:
+                continue
         _record_sync(
             db,
             order.order_id,
@@ -283,6 +288,8 @@ def _handle_orders(db: Session, orders: list[OrderPayload], action_label: str) -
                 f"Status {order.order_open_status} not handled",
                 timestamp=order.order_date,
             )
+        # Session autoflush is off; flush so later dedup checks see this order.
+        db.flush()
     return processed
 
 
@@ -332,7 +339,13 @@ def force_sync(
     _: User = Depends(ensure_manager_or_owner),
 ):
     since = _latest_sync_timestamp(db)
-    rows, cart_options = fetch_order_rows(since)
+    try:
+        rows, cart_options = fetch_order_rows(since)
+    except pymysql.MySQLError:
+        logger.exception("Force sync could not reach the orders database")
+        return PlainTextResponse(
+            "Force sync failed: could not reach the orders database.", status_code=502
+        )
     if not rows:
         return PlainTextResponse("No new orders found")
     orders = _build_orders_from_rows(rows, cart_options)

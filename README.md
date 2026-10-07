@@ -19,21 +19,20 @@ This repository hosts the new inventory management service described in `PRD.MD`
 
 ### How to run locally
 
-1. Install dependencies (e.g., `pip install -r backend/requirements.txt`).
+1. Install dependencies with Python 3.11 (`pip install -r requirements.txt`).
 2. Copy `.env.example` to `.env` with your local MySQL and notification credentials.
 3. Start the backend (`uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000`).
 4. The first user created through the admin console/script should be assigned the Owner role. You can seed one via:
    ```bash
    python - <<'PY'
-   from sqlalchemy.orm import Session
+   from backend.app.auth import hash_password
    from backend.app.database import SessionLocal
    from backend.app.models import RoleEnum, User
-   from passlib.hash import bcrypt
 
    with SessionLocal() as db:
        user = User(
            email="owner@example.com",
-           password_hash=bcrypt.hash("secret"),
+           password_hash=hash_password("secret"),
            role=RoleEnum.owner,
        )
        db.add(user)

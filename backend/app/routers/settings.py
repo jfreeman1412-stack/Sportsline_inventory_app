@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -12,7 +14,7 @@ from ..models import RoleEnum, Tag, User
 from ..services.app_settings import get_app_settings
 
 router = APIRouter(tags=["settings"])
-templates = Jinja2Templates(directory="backend/app/templates")
+templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
 
 
 def _get_all_tags(db: Session) -> list[Tag]:
