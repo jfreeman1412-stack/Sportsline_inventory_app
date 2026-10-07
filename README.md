@@ -17,6 +17,10 @@ This repository hosts the new inventory management service described in `PRD.MD`
    - `POST /shipstation/label`: ShipStation webhook to deduct shipping SKUs (requires `X-Internal-Token`).
 4. Launch the poller container to keep stock deductions in sync with `ms_orders`.
 
+### Running on the Sytist droplet
+
+See [deploy/droplet/README.md](deploy/droplet/README.md) for the production setup behind `inventory.sportslinephotography.com`. Set `COOKIE_SECURE=true` whenever the app is served over HTTPS. Failed logins are throttled (5 per email and IP, 20 per email, per 15 minutes).
+
 ### How to run locally
 
 1. Install dependencies with Python 3.11 (`pip install -r requirements.txt`).

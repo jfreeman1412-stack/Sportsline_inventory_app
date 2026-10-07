@@ -24,6 +24,13 @@ from backend.app.database import Base
 
 
 @pytest.fixture(autouse=True)
+def clear_login_throttle():
+    from backend.app.services import login_limiter
+
+    login_limiter.reset()
+
+
+@pytest.fixture(autouse=True)
 def no_legacy_db(monkeypatch):
     """Tests never talk to the legacy MySQL orders database."""
     monkeypatch.setattr("backend.app.routers.sync.get_legacy_product_name", lambda sku: None)

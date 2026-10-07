@@ -1,0 +1,47 @@
+# Production setup for the Sytist droplet. The app publishes no ports: the Sytist
+# container's Apache reaches it as `inventory-app` on the shared sytist_docker_default
+# network (same pattern as delivery-app), and it reaches MySQL there as `mysql`.
+# Usage: docker compose -f docker-compose.droplet.yml up -d --build
+# Full steps: deploy/droplet/README.md
+services:
+  inventory-app:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: inventory-app
+    command:
+      [
+        "uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000",
+        "--proxy-headers", "--forwarded-allow-ips", "*",
+      ]
+    env_file: .env
+    environment:
+      INTERNAL_SYNC_URL: http://inventory-app:8000/internal-sync
+      COOKIE_SECURE: "true"
+    networks:
+      sytist:
+        aliases:
+          - inventory-app
+    mem_limit: 512m
+    restart: unless-stopped
+
+  inventory-poller:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: inventory-poller
+    command: ["python", "backend/poller/poller.py"]
+    env_file: .env
+    environment:
+      INTERNAL_SYNC_URL: http://inventory-app:8000/internal-sync
+    networks:
+      - sytist
+    depends_on:
+      - inventory-app
+    mem_limit: 256m
+    restart: unless-stopped
+
+networks:
+  sytist:
+    external: true
+    name: sytist_docker_default

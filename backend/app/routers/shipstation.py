@@ -1,4 +1,5 @@
 import json
+import hmac
 import logging
 import math
 from datetime import datetime
@@ -65,7 +66,7 @@ def shipstation_label(
     x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
     db: Session = Depends(get_db),
 ):
-    if x_internal_token != settings.internal_sync_token:
+    if not hmac.compare_digest(x_internal_token or "", settings.internal_sync_token):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     if shipstation_already_deducted(db, payload.shipstation_order_id):

@@ -49,6 +49,7 @@ def set_session_cookie(response: Response, user_id: int) -> None:
         SESSION_COOKIE,
         token,
         httponly=True,
+        secure=settings.cookie_secure,
         samesite="lax",
         max_age=SESSION_MAX_AGE,
         expires=SESSION_MAX_AGE,

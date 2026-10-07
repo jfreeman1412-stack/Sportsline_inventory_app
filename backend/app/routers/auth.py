@@ -23,6 +23,7 @@ from ..auth import (
 )
 from ..database import get_db
 from ..models import RoleEnum, User
+from ..services import login_limiter
 
 router = APIRouter(tags=["auth"])
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
@@ -49,8 +50,22 @@ def login(
     password: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    user = db.scalar(select(User).where(User.email == email.lower().strip()))
+    email = email.lower().strip()
+    client_ip = request.client.host if request.client else "unknown"
+    if login_limiter.is_blocked(client_ip, email):
+        return templates.TemplateResponse(
+            "auth/login.html",
+            {
+                "request": request,
+                "error": "Too many failed attempts. Wait 15 minutes and try again.",
+                "current_user": None,
+                "title": "Login",
+            },
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+    user = db.scalar(select(User).where(User.email == email))
     if not user or not verify_password(password, user.password_hash):
+        login_limiter.record_failure(client_ip, email)
         return templates.TemplateResponse(
             "auth/login.html",
             {
@@ -61,6 +76,7 @@ def login(
             },
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
+    login_limiter.record_success(client_ip, email)
     redirect = RedirectResponse(url="/", status_code=302)
     set_session_cookie(redirect, user.user_id)
     return redirect
