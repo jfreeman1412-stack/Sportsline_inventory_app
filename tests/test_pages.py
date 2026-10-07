@@ -20,7 +20,7 @@ def client(session):
 @pytest.fixture
 def owner(client, session):
     response = client.post(
-        "/register", data={"email": "Owner@Example.com", "password": "pw"}, follow_redirects=False
+        "/register", data={"email": "Owner@Example.com", "password": "password1"}, follow_redirects=False
     )
     assert response.status_code == 302
     return client
@@ -122,3 +122,29 @@ def test_logout_clears_session(owner):
     assert response.status_code == 302
     assert "inventory_session=" in response.headers.get("set-cookie", "")
     assert owner.get("/settings", follow_redirects=False).status_code in (401, 303)
+
+
+def test_signup_closes_after_first_user(owner, client):
+    owner.post("/logout")
+    response = client.post("/register", data={"email": "stranger@example.com", "password": "password1"})
+    assert response.status_code == 403
+    assert "Sign-up is closed" in client.get("/register").text
+
+
+def test_owner_adds_user_who_can_change_password(owner, client, session):
+    from backend.app.models import RoleEnum, User
+
+    owner.post(
+        "/settings/users/create",
+        data={"email": "New@Example.com", "password": "temp-pass1", "role": "manager"},
+    )
+    added = session.query(User).filter_by(email="new@example.com").one()
+    assert added.role == RoleEnum.manager
+    owner.post("/logout")
+    client.post("/login", data={"email": "new@example.com", "password": "temp-pass1"})
+    response = client.post(
+        "/account/password",
+        data={"current_password": "temp-pass1", "new_password": "my-own-pass"},
+        follow_redirects=False,
+    )
+    assert "Password+updated" in response.headers["location"]

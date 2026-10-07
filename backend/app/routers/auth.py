@@ -5,6 +5,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
+from urllib.parse import urlencode
+
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -64,10 +66,25 @@ def login(
     return redirect
 
 
+MIN_PASSWORD_LENGTH = 8
+
+
+def _registration_open(db: Session) -> bool:
+    # Self sign-up only creates the first (Owner) account. After that, the Owner adds
+    # people from Settings so nobody who finds the URL can create an account.
+    return (db.scalar(select(func.count()).select_from(User)) or 0) == 0
+
+
+def _settings_redirect(msg: str | None = None) -> RedirectResponse:
+    url = "/settings" if not msg else f"/settings?{urlencode({'msg': msg})}"
+    return RedirectResponse(url=url, status_code=303)
+
+
 @router.get("/register")
-def register_form(request: Request):
+def register_form(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
-        "auth/register.html", {"request": request, "title": "Register"}
+        "auth/register.html",
+        {"request": request, "title": "Register", "closed": not _registration_open(db)},
     )
 
 
@@ -79,6 +96,22 @@ def register(
     password: str = Form(...),
     db: Session = Depends(get_db),
 ):
+    if not _registration_open(db):
+        return templates.TemplateResponse(
+            "auth/register.html",
+            {"request": request, "title": "Register", "closed": True},
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return templates.TemplateResponse(
+            "auth/register.html",
+            {
+                "request": request,
+                "title": "Register",
+                "error": f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
+            },
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
     user = User(
         email=email.lower().strip(),
         password_hash=hash_password(password),
@@ -180,3 +213,55 @@ def update_user_role(
     user.role = role
     db.commit()
     return RedirectResponse(url="/settings", status_code=303)
+
+
+@router.post("/settings/users/create")
+def create_user(
+    email: str = Form(...),
+    password: str = Form(...),
+    role: RoleEnum = Form(RoleEnum.operator),
+    current_user: User = Depends(ensure_owner),
+    db: Session = Depends(get_db),
+):
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return _settings_redirect(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+    user = User(email=email.lower().strip(), password_hash=hash_password(password), role=role)
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _settings_redirect(f"{user.email} already has an account.")
+    return _settings_redirect(f"Added {user.email}. Share the temporary password with them.")
+
+
+@router.post("/settings/users/{user_id}/delete")
+def delete_user(
+    user_id: int,
+    current_user: User = Depends(ensure_owner),
+    db: Session = Depends(get_db),
+):
+    if user_id == current_user.user_id:
+        return _settings_redirect("You can't remove your own account.")
+    user = db.scalar(select(User).where(User.user_id == user_id))
+    if user:
+        db.delete(user)
+        db.commit()
+        return _settings_redirect(f"Removed {user.email}.")
+    return _settings_redirect()
+
+
+@router.post("/account/password")
+def change_password(
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not verify_password(current_password, current_user.password_hash):
+        return _settings_redirect("Current password is incorrect.")
+    if len(new_password) < MIN_PASSWORD_LENGTH:
+        return _settings_redirect(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+    current_user.password_hash = hash_password(new_password)
+    db.commit()
+    return _settings_redirect("Password updated.")

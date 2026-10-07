@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 
 {% block content %}
+  {% if msg %}
+    <div class="alert alert-info">{{ msg }}</div>
+  {% endif %}
   <div class="row g-4">
     <div class="col-md-6">
       <div class="card shadow-sm">
@@ -21,6 +24,19 @@
             </div>
             <button class="btn btn-sm btn-primary">Save preferences</button>
           </form>
+          <hr />
+          <h3 class="h6">Change password</h3>
+          <form method="post" action="/account/password" class="row g-2">
+            <div class="col-sm-6">
+              <input type="password" name="current_password" class="form-control form-control-sm" placeholder="Current password" required />
+            </div>
+            <div class="col-sm-6">
+              <input type="password" name="new_password" class="form-control form-control-sm" placeholder="New password" minlength="8" required />
+            </div>
+            <div class="col-12">
+              <button class="btn btn-sm btn-outline-primary">Update password</button>
+            </div>
+          </form>
         </div>
       </div>
     </div>
@@ -36,6 +52,7 @@
                   <th>Email</th>
                   <th>Role</th>
                   <th>Alerts</th>
+                  {% if current_user.role.value == "owner" %}<th></th>{% endif %}
                 </tr>
               </thead>
               <tbody>
@@ -65,10 +82,40 @@
                         />
                       </form>
                     </td>
+                    {% if current_user.role.value == "owner" %}
+                      <td>
+                        {% if user.user_id != current_user.user_id %}
+                          <form method="post" action="/settings/users/{{ user.user_id }}/delete" class="m-0">
+                            <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Remove {{ user.email }}?');">Remove</button>
+                          </form>
+                        {% endif %}
+                      </td>
+                    {% endif %}
                   </tr>
                 {% endfor %}
               </tbody>
             </table>
+            {% if current_user.role.value == "owner" %}
+              <h3 class="h6 mt-3">Add user</h3>
+              <form method="post" action="/settings/users/create" class="row g-2">
+                <div class="col-sm-5">
+                  <input type="email" name="email" class="form-control form-control-sm" placeholder="Email" required />
+                </div>
+                <div class="col-sm-4">
+                  <input type="text" name="password" class="form-control form-control-sm" placeholder="Temporary password" minlength="8" required />
+                </div>
+                <div class="col-sm-3">
+                  <select name="role" class="form-select form-select-sm">
+                    <option value="operator" selected>Operator</option>
+                    <option value="manager">Manager</option>
+                    <option value="owner">Owner</option>
+                  </select>
+                </div>
+                <div class="col-12">
+                  <button class="btn btn-sm btn-primary">Add user</button>
+                </div>
+              </form>
+            {% endif %}
           </div>
         </div>
       </div>
