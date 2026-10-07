@@ -102,9 +102,9 @@
               <div class="fs-3 text-danger">{{ low_stock_count }}</div>
             </div>
           </div>
-          <p class="text-muted small mt-3 mb-0">
-            Slow movers & waste trends coming soon.
-          </p>
+          {% if can_force_sync %}
+            <a href="/analytics" class="btn btn-sm btn-outline-primary mt-3">Usage, waste &amp; spend</a>
+          {% endif %}
         </div>
       </div>
     </div>

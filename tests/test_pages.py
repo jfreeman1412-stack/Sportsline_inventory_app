@@ -35,6 +35,7 @@ def seeded(session):
     session.add(AddOnMapping(add_on_name="Gloss", sku_code="ROLL8", quantity=1))
     session.commit()
     session.add(PurchaseLog(sku_id=sku.sku_id, purchase_date=date(2026, 1, 1), quantity=5, price=10))
+    session.add(PurchaseLog(sku_id=sku.sku_id, purchase_date=date.today(), quantity=5, price=12, supplier_name="Acme"))
     session.add(AuditLog(order_id=1, action="deduct-print", child_sku_code="ROLL8", quantity=3))
     session.commit()
     return sku, tag
@@ -69,6 +70,10 @@ def test_logged_out_browser_is_sent_to_login(client):
         "/addons/1/edit",
         "/logs/deductions",
         "/settings",
+        "/analytics/",
+        "/analytics/?days=90",
+        "/logs/changes",
+        "/logs/changes?q=ROLL8",
         "/login",
         "/register",
     ],
@@ -148,3 +153,62 @@ def test_owner_adds_user_who_can_change_password(owner, client, session):
         follow_redirects=False,
     )
     assert "Password+updated" in response.headers["location"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/products/export",
+        "/skus/purchases/export",
+        "/logs/deductions/export",
+        "/logs/changes?format=csv",
+        "/analytics/?format=csv",
+    ],
+)
+def test_csv_exports(owner, seeded, path):
+    response = owner.get(path)
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert response.text.count("\n") >= (1 if "changes" in path else 2)
+
+
+def test_analytics_flags_low_runway(owner, seeded):
+    page = owner.get("/analytics/?days=30").text
+    assert "Acme" in page
+    assert "+20.0%" in page
+
+
+def test_operator_edits_basic_fields_only(owner, client, seeded, session):
+    from backend.app.models import AuditLog
+
+    sku, _ = seeded
+    owner.post(
+        "/settings/users/create",
+        data={"email": "op@example.com", "password": "op-password", "role": "operator"},
+    )
+    owner.post("/logout")
+    client.post("/login", data={"email": "op@example.com", "password": "op-password"})
+    response = client.post(
+        f"/skus/{sku.sku_id}/edit",
+        data={"name": "Roll 8in glossy", "current_stock": "0", "waste_pct": "50", "alert_threshold_qty": "1"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    session.refresh(sku)
+    assert sku.name == "Roll 8in glossy"
+    assert (sku.current_stock, sku.waste_pct, sku.alert_threshold_qty) == (50.0, 0.0, 20.0)
+    entry = session.query(AuditLog).filter_by(action="sku-edit").one()
+    assert "name: Roll, 8in → Roll 8in glossy" in entry.details
+    # Operators still can't override stock inline or delete.
+    assert client.post(f"/skus/{sku.sku_id}/quick-update", data={"current_stock": "1"}).status_code == 403
+    assert client.post(f"/skus/{sku.sku_id}/delete").status_code == 403
+
+
+def test_purchase_is_recorded_in_history(owner, seeded, session):
+    sku, _ = seeded
+    owner.post(
+        f"/skus/{sku.sku_id}/purchase-log",
+        data={"purchase_date": "2026-02-01", "quantity": "10", "price": "11", "add_to_stock": "on"},
+    )
+    page = owner.get(f"/skus/{sku.sku_id}").text
+    assert "purchase-add" in page and "owner@example.com" in page

@@ -96,6 +96,24 @@ Managers and Owners can now audit raw-material deductions at `/logs/deductions`.
 
 Add-on options from `ms_cart_options` now deduct their own SKUs. Use the **Add-on SKUs** page (Managers/Owners only) to assign SKUs and quantities to each legacy add-on name so the sync automatically applies those deductions when the option appears on an order line.
 
+### Users and roles
+
+Only the very first account can be created from `/register`; it becomes the Owner. After that, sign-up is closed and the Owner adds people (with a temporary password and a role) from **Settings**. Everyone can change their own password there.
+
+- **Operators** can view everything, add raw materials and edit their basic details (name, vendor, sales rep, unit, tags).
+- **Managers** can also set stock counts, waste % and alert thresholds, log purchases, edit BOMs and mappings, and see the logs and analytics.
+- **Owners** can also add/remove users and change roles.
+
+### Change History, Exports and Analytics
+
+- Every manual change (raw materials, stock counts, purchases, BOMs, products, shipping and add-on mappings) is recorded with who made it. See it per raw material on its detail page, or for everything at `/logs/changes`.
+- CSV exports: raw materials, purchases, products (with BOMs), the deduction log, the change history and the analytics usage table.
+- `/analytics` (Managers/Owners) shows what will run out soon at the current rate of use, usage and estimated waste per raw material, supplier spend by supplier and month, and the latest price changes.
+
+### Shipping retries
+
+When an order moves to shipped (status 39) before ShipStation has its package details, the app records it as waiting and retries it on every poller cycle for up to 3 days (20 orders per cycle). The poller now posts every cycle, even without new orders, so these retries keep running.
+
 ### Development Notes
 
 - Backend tests (Pytest) target 80% coverage eventually.
